@@ -1,17 +1,8 @@
-"""tests.test_class_ab_inventory — frozen classification + seccomp semantics.
+"""tests.test_class_ab_inventory — capability classification tests.
 
-Forensic corrections F3/F4/F5:
-
-* F3 — the operative C1A capability is `C1A static_file_inspect` over T3MP3ST
-  `binary_sink_scan` (pure JS), distinct from the historical `C1`
-  `file`-adapter audit.
-* F4 — `RUN_TEST` is GOVERNED UNSANDBOXED HOST EXECUTION: not Class A, not
-  sandboxed Class B, not C1A.
-* F5 — seccomp allows `execve` for the curated runtime closure, denies
-  `execveat`, and constrains child-process creation through the
-  argument-filtered `clone` rule.
-
-These assert artifacts/behavior, not documentation strings alone.
+F3 identifies the C1A provider seam.  F4 now requires RUN_TEST to use the
+separate fail-closed bubblewrap executor.  F5 retains the existing seccomp
+semantic tests for the C1A substrate; RUN_TEST does not claim seccomp isolation.
 """
 from __future__ import annotations
 
@@ -54,29 +45,32 @@ class C1AIdentifiers(unittest.TestCase):
 
 
 class RunTestClassificationF4(unittest.TestCase):
-    def test_3_document_freezes_run_test_classification(self):
-        text = DOC.read_text()
-        self.assertIn("GOVERNED UNSANDBOXED HOST EXECUTION", text)
-        self.assertIn("NOT** Class A", text)
-        self.assertIn("NOT** sandboxed Class B", text)
+    def test_3_run_test_sandbox_boundary_is_documented(self):
+        readme = (REPO / "README.md").read_text(encoding="utf-8")
+        self.assertIn("Linux RUN_TEST requires `bwrap`", readme)
+        self.assertIn("fail closed", readme.lower())
+        self.assertIn("not a production security boundary", readme.lower())
 
     def test_4_run_test_is_not_a_class_a_capability(self):
-        # No Class A/B registry advertises RUN_TEST; the capability enum is
-        # distinct from the C1A provider tool.
         self.assertNotEqual(provider_runtime.C1A_TOOL, "run_test")
         self.assertNotEqual(provider_runtime.C1A_CAPABILITY_ID, "run_test")
 
-    def test_5_run_test_host_subprocess_source(self):
-        src = (REPO / "raphael_ibm_bob" / "capabilities.py").read_text()
-        self.assertIn("subprocess.run", src)
-        self.assertIn("Capability.RUN_TEST: _run_test", src)
+    def test_5_run_test_uses_only_the_sandbox_executor(self):
+        capabilities = (REPO / "raphael_ibm_bob" / "capabilities.py").read_text()
+        helper = (REPO / "raphael_ibm_bob" / "run_test_sandbox.py").read_text()
+        self.assertIn("run_test_in_sandbox", capabilities)
+        self.assertNotIn("subprocess.run", capabilities)
+        self.assertIn("subprocess.Popen", helper)
+        self.assertIn('"--unshare-net"', helper)
+        self.assertIn('"--unshare-user"', helper)
+        self.assertIn('"--ro-bind"', helper)
 
-    def test_5b_no_overstated_structural_isolation(self):
-        text = DOC.read_text()
-        # corrected wording: availability, not structural isolation
-        self.assertIn("no current provider transport", text)
-        self.assertIn("not a structural guarantee", text)
-        self.assertNotIn("is not reachable from `RUN_TEST`", text)
+    def test_5b_run_test_does_not_claim_seccomp_isolation(self):
+        readme = (REPO / "README.md").read_text(encoding="utf-8")
+        helper = (REPO / "raphael_ibm_bob" / "run_test_sandbox.py").read_text()
+        self.assertIn("No seccomp policy", readme)
+        self.assertIn("is claimed for RUN_TEST", readme)
+        self.assertNotIn("--seccomp", helper)
 
 
 class SeccompExecveSemanticsF5(unittest.TestCase):

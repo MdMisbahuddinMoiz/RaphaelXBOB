@@ -17,15 +17,14 @@ Process execution: ONLY for RUN_TEST, scoped to `python3 -m unittest`.
 """
 from __future__ import annotations
 
-import os
 import re
-import subprocess
-import sys
 from pathlib import Path
 from typing import Any, Dict
 
 from raphael_ibm_bob.contracts import ActionRequest, Capability
+from raphael_ibm_bob.run_test_sandbox import run_test_in_sandbox
 from raphael_ibm_bob.workspace import Workspace
+
 
 
 # -----------------------------------------------------------------------------
@@ -41,28 +40,6 @@ MAX_SEARCH_FILE_BYTES = 1_000_000
 #: Maximum length of a returned matching line (characters).
 MAX_SEARCH_LINE = 200
 
-#: Environment variables RUN_TEST is allowed to pass to the child process.
-#: Everything else (credentials, tokens, proxies, cloud keys) is scrubbed.
-_RUN_TEST_ENV_ALLOWLIST = frozenset({
-    "PATH", "HOME", "LANG", "TMPDIR", "TEMP", "TMP", "USER", "LOGNAME",
-    "SHELL", "TERM", "SYSTEMROOT", "WINDIR", "PYTHONIOENCODING",
-    "PYTHONHASHSEED", "PYTHONUTF8",
-})
-
-
-def _scrubbed_env(workspace: Workspace) -> Dict[str, str]:
-    """Build a minimal, secret-free environment for the RUN_TEST child.
-
-    Only an explicit allow-list (plus any ``LC_*`` locale variable) is
-    inherited. ``PYTHONPATH`` is set explicitly to the workspace root so
-    the named test module is importable without inheriting an ambient one.
-    """
-    env: Dict[str, str] = {}
-    for key, value in os.environ.items():
-        if key in _RUN_TEST_ENV_ALLOWLIST or key.startswith("LC_"):
-            env[key] = value
-    env["PYTHONPATH"] = str(workspace.root)
-    return env
 
 
 def _read(workspace: Workspace, request: ActionRequest) -> Dict[str, Any]:
@@ -141,62 +118,57 @@ def _write(workspace: Workspace, request: ActionRequest) -> Dict[str, Any]:
 
 
 def _run_test(workspace: Workspace, request: ActionRequest) -> Dict[str, Any]:
-    """Run a single named test file via `python3 -m unittest`.
-
-    The test file MUST be importable as a module whose name is its
-    filesystem path with `/` replaced by `.` and `.py` stripped. To keep
-    this MVP-correct without relying on sys.path manipulation, we set
-    PYTHONPATH to the workspace root and run `python3 -m unittest
-    <dotted.module>`. The test file is required to live inside the
-    workspace and match the test_*.py / *_test.py pattern.
-
-    T1-4: the execution bound is `request.timeout_seconds` when set,
-    else the 30s broker default. A timeout is reported as an explicit
-    `{"timeout": True, ...}` payload with partial output preserved —
-    never as success, never as a DENY (the decision was ALLOW).
-    """
-    p = workspace.resolve(request.target)
-    rel = p.relative_to(workspace.root).with_suffix("")
-    module = ".".join(rel.parts)
-    timeout = (request.timeout_seconds
-               if request.timeout_seconds is not None else 30.0)
-    # Phase 1 hardening: never inherit the ambient process environment
-    # (credentials, tokens, proxy config). Only a small allow-list plus an
-    # explicit PYTHONPATH reaches the child.
-    env = _scrubbed_env(workspace)
-    try:
-        proc = subprocess.run(
-            [sys.executable, "-m", "unittest", module, "-v"],
-            cwd=str(workspace.root),
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired as exc:
-        # Partial output may arrive as bytes or str depending on how
-        # the interpreter was killed; normalize defensively so the
-        # evidence payload stays JSON-serializable for the ledger.
-        def _text(value: object) -> str:
-            if value is None:
-                return ""
-            if isinstance(value, bytes):
-                return value.decode("utf-8", errors="replace")
-            return str(value)
-        return {
+    """Run one authorized test in the fail-closed Linux sandbox."""
+    test_path = workspace.resolve(request.target)
+    relative = test_path.relative_to(workspace.root).with_suffix("")
+    module = ".".join(relative.parts)
+    timeout = (
+        request.timeout_seconds
+        if request.timeout_seconds is not None
+        else 30.0
+    )
+    result = run_test_in_sandbox(
+        workspace_root=workspace.root,
+        test_path=test_path,
+        requested_target=request.target,
+        module=module,
+        timeout_seconds=timeout,
+        fixture_manifest=request.purpose,
+    )
+    payload: Dict[str, Any] = {
+        "module": module,
+        "returncode": result.returncode,
+        "sandboxed": result.sandboxed,
+        "sandbox_provider": result.sandbox_provider,
+        "network_isolated": result.network_isolated,
+        "workspace_mount": result.workspace_mount,
+        "sandbox_failure_reason": result.sandbox_failure_reason,
+        "output_truncated": result.output_truncated,
+        "process_group_managed": result.process_group_managed,
+        "process_group_cleanup_verified": (
+            result.process_group_cleanup_verified
+        ),
+        "resource_limits": dict(result.resource_limits),
+        "approved_fixture_count": result.approved_fixture_count,
+        "approved_fixture_bytes": result.approved_fixture_bytes,
+    }
+    if result.timed_out:
+        payload.update({
             "timeout": True,
             "timeout_seconds": timeout,
-            "module": module,
-            "returncode": None,
-            "partial_stdout": _text(exc.stdout)[-2000:],
-            "partial_stderr": _text(exc.stderr)[-2000:],
-        }
-    return {
-        "module": module,
-        "returncode": proc.returncode,
-        "stdout": proc.stdout[-4000:],
-        "stderr": proc.stderr[-4000:],
-    }
+            "partial_stdout": result.stdout,
+            "partial_stderr": result.stderr,
+            "stdout_truncated": result.stdout_truncated,
+            "stderr_truncated": result.stderr_truncated,
+        })
+    else:
+        payload.update({
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "stdout_truncated": result.stdout_truncated,
+            "stderr_truncated": result.stderr_truncated,
+        })
+    return payload
 
 
 CAPABILITY_DISPATCH = {

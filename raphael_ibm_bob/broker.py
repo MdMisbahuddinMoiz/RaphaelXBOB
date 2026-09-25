@@ -383,10 +383,39 @@ class BOBBroker:
     ) -> BrokerResult:
         try:
             payload = execute_capability(self._workspace, stamped)
+            sandbox_reason = None
+            if isinstance(payload, dict):
+                raw_reason = payload.get("sandbox_failure_reason")
+                if isinstance(raw_reason, str) and raw_reason:
+                    sandbox_reason = raw_reason
             if isinstance(payload, dict) and payload.get("timeout") is True:
                 execution = ExecutionResult(
                     sequence=stamped.sequence, success=False, output="timeout",
                     error=f"TimeoutExpired after {payload.get('timeout_seconds')}s",
+                    evidence=payload)
+            elif (isinstance(payload, dict)
+                  and (payload.get("sandboxed") is False
+                       or sandbox_reason is not None)):
+                execution = ExecutionResult(
+                    sequence=stamped.sequence, success=False,
+                    output="sandbox-refused",
+                    error=f"SandboxRefused:{sandbox_reason or 'sandbox-unavailable'}",
+                    evidence=payload)
+            elif (isinstance(payload, dict)
+                  and payload.get("output_truncated") is True):
+                execution = ExecutionResult(
+                    sequence=stamped.sequence, success=False,
+                    output="output-truncated",
+                    error="OutputLimitExceeded",
+                    evidence=payload)
+            elif (stamped.capability == Capability.RUN_TEST
+                  and isinstance(payload, dict)
+                  and payload.get("returncode") != 0):
+                returncode = payload.get("returncode")
+                execution = ExecutionResult(
+                    sequence=stamped.sequence, success=False,
+                    output="test-failed",
+                    error=f"TestFailed:returncode={returncode}",
                     evidence=payload)
             else:
                 execution = ExecutionResult(

@@ -22,9 +22,9 @@ Mission → Plan A → Runtime → Broker → Policy → Evidence → Finding
 
 ## Quickstart & Canonical Judge Demo
 
-No installation step is required: `raphael_ibm_bob`, the demos, and the tests are
-stdlib-only in their Python imports. Test execution spawns subprocesses for `RUN_TEST`
-capabilities, the independent probe, and sandboxed provider inspection.
+Raphael's governed Python package uses standard-library imports. Linux RUN_TEST requires `bwrap`
+(bubblewrap) as a system prerequisite. The independent probe and sandboxed provider inspection
+remain separate subprocess paths.
 
 ```bash
 # 1. Canonical judge demonstration (13 stages -> QualityGate: COMPLETE, exit 0)
@@ -130,6 +130,52 @@ RAPHAEL strictly enforces these foundational invariants across all layers:
 - Strict workspace path containment (preventing traversal and path escaping).
 - Mission-scope containment via canonical path resolution in [`c1a_scope.py`](file:///home/moiz/raphael-2.0-rbsv2r/raphael_ibm_bob/c1a_scope.py).
 - Capability invariants (e.g. `RUN_TEST` only allows test files matching `test_*.py` or `*_test.py`).
+
+### 2a. Fail-Closed RUN_TEST Sandbox
+
+`RUN_TEST` is invoked only after `BOBRuntime` → `BOBBroker` → `BOBPolicy` allows the requested
+test path. The capability then uses `raphael_ibm_bob/run_test_sandbox.py`; there is no direct
+host-subprocess fallback.
+
+- The helper rejects invalid workspaces, missing or alternate test paths, and symlinks in the
+  authorized test path before launch.
+- It copies Python source from the test file's parent package and only explicitly approved
+  non-Python fixture files. The narrow manifest interface is the `purpose` prefix
+  `run-test-fixtures=` followed by a JSON list of canonical workspace-relative paths, for example
+  `run-test-fixtures=["data/allowed.txt"]`.
+- Every manifest path must be a canonical regular file inside the workspace. Traversal, absolute
+  paths, symlinks, hidden paths, credential-like names, directories, and missing files fail before
+  `Popen`. No adjacent data files or repository subtrees are inferred.
+- Approved files are copied into the private staged workspace, whose `/workspace` mount remains
+  read-only. Hidden files, unapproved data files, the declared host workspace, its parent
+  repository, and credential files are not mounted.
+- Read-only Python and system runtime mounts are explicit. `/etc`, the normal user home, `/run`,
+  and host socket locations are not mounted. `/home/raphael` is a private read-only home, and
+  `TMPDIR=/tmp/raphael-run-test` is the only test-writable mount.
+- Bubblewrap uses user, PID, network, IPC, and UTS namespaces, UID/GID 65534, dropped capabilities,
+  a read-only root, and `--unshare-net`. Local tests verify that a listener on host loopback is
+  unreachable from RUN_TEST.
+- The child receives a cleared, explicit environment. Model/API keys, cloud credentials,
+  SSH/Git helpers, VPN values, proxy credentials, database passwords, and arbitrary parent
+  variables are not passed.
+- The launcher uses `stdin=DEVNULL`, `close_fds=True`, and a separate process group. Timeout sends
+  termination to the full group, escalates to kill, drains bounded output, and removes temporary
+  state. Stdout and stderr are capped during collection; only the last 4,000 characters are
+  returned, and truncation makes the execution unsuccessful.
+- Execution status is explicit: only `returncode == 0` produces `success=true`; nonzero return codes,
+  timeouts, sandbox refusals, launch failures, and output truncation produce `success=false`.
+- CPU-time rlimits, address-space limits, and a process-count limit are not enforced. The evidence
+  payload reports each limitation rather than claiming enforcement.
+
+If Linux, `bwrap`, the runtime executable, namespace setup, or safe mount construction is
+unavailable, RUN_TEST returns a structured refusal with `sandboxed=false`; Policy-approved test
+code is not executed directly on the host. Non-Linux platforms fail closed with
+`sandbox_failure_reason="sandbox-platform-unsupported"`.
+
+Sandbox strength depends on Linux namespace support and kernel configuration. Bubblewrap alone is
+not a production security boundary and is not a universal OS-isolation mechanism. No seccomp policy
+is claimed for RUN_TEST, and the boundary is not a defense against every kernel vulnerability.
+IBM Bob is not part of D18.
 
 ### 3. Cryptographic Authorization Binding
 [`C1AAuthorizationBinding`](file:///home/moiz/raphael-2.0-rbsv2r/raphael_ibm_bob/c1a_authorization.py) generates single-use HMAC-SHA256 authorization tokens sealing the complete authoritative execution identity (`run_id`, `decision_seq`, `request_seq`, `invocation_id`, `proof_session_id`, `lifecycle_id`, `sandbox_id`, `capability_id`, `provider_id`, `target`, `fixture_path`). Any field mutation, replay, or foreign identity fails closed.
