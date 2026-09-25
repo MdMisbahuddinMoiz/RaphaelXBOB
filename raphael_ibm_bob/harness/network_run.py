@@ -22,6 +22,7 @@ independent governed request. The request is built from the mission-bound
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -53,8 +54,11 @@ from raphael_ibm_bob.network_runtime import (
 from raphael_ibm_bob.policy import BOBPolicy
 from raphael_ibm_bob.quality_gate import BOBQualityGate, GateInputs
 from raphael_ibm_bob.runtime import BOBRuntime
+from raphael_ibm_bob.seal import write_seal
 from raphael_ibm_bob.target_profile import TargetProfile, get_target_store
 from raphael_ibm_bob.workspace import Workspace
+
+_log = logging.getLogger(__name__)
 
 NETWORK_METHOD = "GET"
 NETWORK_PURPOSE = "network-http-request method=GET"
@@ -94,6 +98,26 @@ def _append(ledger: EvidenceLedger, *, producer: str, prefix: str,
         evidence_id=evidence_id, producer=producer, request_seq=request_seq,
         decision_seq=decision_seq, result_seq=result_seq, payload=payload)
     return evidence_id
+
+
+def _try_write_seal(run_dir: Path) -> None:
+    """Attempt to write seal.json after ledger close; never raises.
+
+    Seal failure is logged at WARNING level so operators can observe it
+    through the existing seal-status behavior (GET /runs/{id}/seal returns
+    missing-seal or head-mismatch), but it does NOT affect the run's
+    verdict, state, or evidence records.  The caller's outcome is preserved
+    regardless.
+    """
+    try:
+        write_seal(run_dir)
+    except Exception as exc:  # noqa: BLE001 — intentional fail-safe
+        _log.warning(
+            "seal write failed for run %s: %s: %s",
+            run_dir.name, type(exc).__name__, exc,
+        )
+
+
 
 
 @dataclass
@@ -300,6 +324,7 @@ def run_network_mission(session: RaphaelSession, mission: Mission,
         run.finished_at = _utcnow()
         save_run(run)
         ledger.close()
+        _try_write_seal(run_dir)
         if sessions_root is not None:
             save_session(session, sessions_root)
         raise
@@ -309,6 +334,7 @@ def run_network_mission(session: RaphaelSession, mission: Mission,
         run.failure_reason = reason
     save_run(run)
     ledger.close()
+    _try_write_seal(run_dir)
     if sessions_root is not None:
         save_session(session, sessions_root)
 
