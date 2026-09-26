@@ -74,6 +74,7 @@ from raphael_ibm_bob.contracts import (
     EvidenceReceipt,
     ExecutionResult,
     PolicyDecision,
+    capability_id,
 )
 
 
@@ -278,7 +279,7 @@ class DecisionRecord:
             request_seq=request_seq,
             decision=decision.decision.value,
             reason=decision.reason,
-            capability=decision.capability.value,
+            capability=capability_id(decision.capability),
             target=decision.target,
         )
 

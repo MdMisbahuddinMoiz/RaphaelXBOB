@@ -61,6 +61,7 @@ CAPABILITY_MATRIX: Final = (
     ("TLS", "NETWORK_TLS_METADATA", "tls", True, False, False),
     ("DNS", "NETWORK_DNS_METADATA", "dns", True, False, False),
     ("Banner", "NETWORK_GENERIC_SERVICE_BANNER", "generic-service", True, False, False),
+    ("ServiceDiscovery", "NETWORK_SERVICE_DISCOVERY", "tcp", True, True, True),
 )
 DESCRIPTOR_ONLY: Final = frozenset(
     capability_id

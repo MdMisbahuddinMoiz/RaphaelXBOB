@@ -10,7 +10,9 @@ Security invariants:
     * a profile belongs to exactly one mission; a run under a different
       mission can never reuse it (``TargetStore.get_target(mission_id)``
       returns None on mismatch -> Policy DENY)
-    * platform is ``htb`` (the only MVP platform)
+    * platform is a registered family (``htb``, ``vulnhub``, ``vmware``);
+      every platform except ``htb`` additionally requires an explicitly
+      declared isolated environment (``ISOLATED_ENVIRONMENTS``)
     * the locator is a canonical host/IP and must be inside ``scope``
     * ports / protocols are explicit allow-lists
     * an authorization reference is mandatory (operator-declared)
@@ -33,10 +35,83 @@ from raphael_ibm_bob.network_scope import (
     host_in_scope,
 )
 
-ALLOWED_PLATFORMS = ("htb",)
 #: D12 adds "telnet" for the governed Telnet session capability. Existing
 #: HTTP target checks are unchanged; authorization stays exact per protocol.
 ALLOWED_PROTOCOLS = ("http", "https", "telnet")
+
+#: Environments that satisfy the isolation requirement for non-HTB platforms.
+#: A deliberately vulnerable lab VM must never be authorized somewhere that
+#: can reach an ordinary network.
+ISOLATED_ENVIRONMENTS = ("isolated-lab", "isolated-lab-net", "host-only-lab")
+
+#: Introspection value only. Non-HTB platforms may never *default* into it —
+#: the operator must name the environment explicitly.
+ISOLATED_ENVIRONMENT = "isolated-lab"
+
+
+@dataclass(frozen=True)
+class PlatformSpec:
+    """Per-platform authorization policy for a declared target.
+
+    Only ``htb`` may be authorized outside an isolated environment or fall
+    back to a default one. Every other platform must be declared by the
+    operator inside an explicitly isolated environment, so a new registry
+    entry is always *more* restrictive than ``htb``, never less.
+
+    Names are generic distribution/hypervisor families; no individual target,
+    image, or challenge is referenced in this module.
+    """
+
+    name: str
+    default_environment: str
+    requires_isolated_environment: bool
+
+
+#: Extend here, not at the call site.
+PLATFORM_SPECS = (
+    PlatformSpec("htb", default_environment="htb",
+                 requires_isolated_environment=False),
+    PlatformSpec("vulnhub", default_environment=ISOLATED_ENVIRONMENT,
+                 requires_isolated_environment=True),
+    PlatformSpec("vmware", default_environment=ISOLATED_ENVIRONMENT,
+                 requires_isolated_environment=True),
+)
+
+#: Accepted platform names, derived from the registry so they cannot drift.
+ALLOWED_PLATFORMS = tuple(spec.name for spec in PLATFORM_SPECS)
+
+
+def _platform_spec(platform: object) -> PlatformSpec:
+    for spec in PLATFORM_SPECS:
+        if spec.name == platform:
+            return spec
+    raise TargetProfileError(f"unsupported platform: {platform!r}")
+
+
+def _validate_environment(spec: PlatformSpec, environment: object) -> str:
+    """Resolve and validate the declared environment, failing closed."""
+    if environment in (None, ""):
+        if spec.requires_isolated_environment:
+            raise TargetProfileError(
+                f"platform {spec.name!r} requires an explicit isolated "
+                f"environment (one of {ISOLATED_ENVIRONMENTS})")
+        return spec.default_environment
+    resolved = str(environment).strip()
+    if spec.requires_isolated_environment \
+            and resolved not in ISOLATED_ENVIRONMENTS:
+        raise TargetProfileError(
+            f"platform {spec.name!r} must be authorized in an isolated "
+            f"environment; got {resolved!r} "
+            f"(allowed: {ISOLATED_ENVIRONMENTS})")
+    return resolved
+
+#: A ``discovery``-stage profile declares a host but no ports/protocols, so
+#: its allow-lists are empty and :meth:`TargetProfile.allows` can never return
+#: True. It therefore authorizes NETWORK_SERVICE_DISCOVERY only; every other
+#: capability fails closed until the operator refines it into ``authorized``.
+TARGET_STAGE_DISCOVERY = "discovery"
+TARGET_STAGE_AUTHORIZED = "authorized"
+TARGET_STAGES = (TARGET_STAGE_DISCOVERY, TARGET_STAGE_AUTHORIZED)
 
 
 class TargetProfileError(ValueError):
@@ -51,7 +126,9 @@ def _canonical(payload: Dict[str, Any]) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
-def _coerce_ports(value: Any) -> Tuple[int, ...]:
+def _coerce_ports(value: Any, *, allow_empty: bool = False) -> Tuple[int, ...]:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        value = []
     if isinstance(value, str):
         value = [p for p in value.replace(" ", "").split(",") if p]
     if not isinstance(value, (list, tuple)):
@@ -65,12 +142,15 @@ def _coerce_ports(value: Any) -> Tuple[int, ...]:
         if not (1 <= port <= 65535):
             raise TargetProfileError(f"port out of range: {port}")
         ports.append(port)
-    if not ports:
+    if not ports and not allow_empty:
         raise TargetProfileError("at least one allowed port is required")
     return tuple(sorted(set(ports)))
 
 
-def _coerce_protocols(value: Any) -> Tuple[str, ...]:
+def _coerce_protocols(value: Any, *, allow_empty: bool = False
+                      ) -> Tuple[str, ...]:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        value = []
     if isinstance(value, str):
         value = [p for p in value.replace(" ", "").split(",") if p]
     if not isinstance(value, (list, tuple)):
@@ -81,7 +161,7 @@ def _coerce_protocols(value: Any) -> Tuple[str, ...]:
         if name not in ALLOWED_PROTOCOLS:
             raise TargetProfileError(f"unsupported protocol: {raw!r}")
         protocols.append(name)
-    if not protocols:
+    if not protocols and not allow_empty:
         raise TargetProfileError("at least one allowed protocol is required")
     return tuple(sorted(set(protocols)))
 
@@ -99,7 +179,20 @@ class TargetProfile:
     authorization_ref: str
     environment: str = "htb"
     version: str = "1.0"
+    stage: str = TARGET_STAGE_AUTHORIZED
     created_ts: str = field(default_factory=_utcnow)
+
+    def __post_init__(self) -> None:
+        spec = _platform_spec(self.platform)
+        if spec.requires_isolated_environment \
+                and self.environment not in ISOLATED_ENVIRONMENTS:
+            raise TargetProfileError(
+                f"platform {self.platform!r} must be authorized in an "
+                f"isolated environment; got {self.environment!r}")
+
+    @property
+    def is_discovery_only(self) -> bool:
+        return self.stage == TARGET_STAGE_DISCOVERY
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -113,11 +206,15 @@ class TargetProfile:
             "authorization_ref": self.authorization_ref,
             "environment": self.environment,
             "version": self.version,
+            "stage": self.stage,
+            "discovery_only": self.is_discovery_only,
             "created_ts": self.created_ts,
         }
 
     def allows(self, *, host: str, port: int, protocol: str) -> bool:
         """Deterministic host/port/protocol authorization (fail closed)."""
+        if self.stage != TARGET_STAGE_AUTHORIZED:
+            return False
         try:
             canonical = canonical_host(host)
         except NetworkScopeError:
@@ -132,6 +229,30 @@ class TargetProfile:
             return False
         return True
 
+    def refined(self, *, allowed_ports: Any, allowed_protocols: Any,
+                scope: Any = None, authorization_ref: Any = None
+                ) -> "TargetProfile":
+        """Return the AUTHORIZED profile for this host given discovered facts.
+
+        Used to promote a ``discovery``-stage profile once service discovery
+        has established the real port/protocol allow-lists. All validation is
+        re-run through :func:`build_target_profile`; nothing is inherited
+        implicitly and the result is fail-closed if the discovered allow-lists
+        are empty or malformed.
+        """
+        return build_target_profile(
+            mission_id=self.mission_id,
+            locator=self.locator,
+            allowed_ports=allowed_ports,
+            allowed_protocols=allowed_protocols,
+            scope=self.scope if scope in (None, "") else scope,
+            authorization_ref=(self.authorization_ref
+                              if authorization_ref in (None, "")
+                              else authorization_ref),
+            platform=self.platform,
+            environment=self.environment,
+        )
+
 
 def build_target_profile(
     *,
@@ -142,19 +263,29 @@ def build_target_profile(
     scope: object = None,
     authorization_ref: object,
     platform: str = "htb",
-    environment: str = "htb",
+    environment: object = None,
+    stage: str = TARGET_STAGE_AUTHORIZED,
 ) -> TargetProfile:
-    """Validate operator input and build a TargetProfile."""
+    """Validate operator input and build a TargetProfile.
+
+    ``stage='discovery'`` permits an IP-only declaration (empty port/protocol
+    allow-lists) so governed service discovery can run before the operator
+    knows the ports. Every other stage keeps the original D9 requirement of
+    explicit non-empty allow-lists.
+    """
     if not isinstance(mission_id, str) or mission_id.strip() == "":
         raise TargetProfileError("mission_id is required")
-    if platform not in ALLOWED_PLATFORMS:
-        raise TargetProfileError(f"unsupported platform: {platform!r}")
+    spec = _platform_spec(platform)
+    environment_text = _validate_environment(spec, environment)
+    if stage not in TARGET_STAGES:
+        raise TargetProfileError(f"unsupported stage: {stage!r}")
     try:
         canonical_locator = canonical_host(locator)
     except NetworkScopeError as exc:
         raise TargetProfileError(str(exc)) from None
-    ports = _coerce_ports(allowed_ports)
-    protocols = _coerce_protocols(allowed_protocols)
+    allow_empty = stage == TARGET_STAGE_DISCOVERY
+    ports = _coerce_ports(allowed_ports, allow_empty=allow_empty)
+    protocols = _coerce_protocols(allowed_protocols, allow_empty=allow_empty)
     if not isinstance(authorization_ref, str) or authorization_ref.strip() == "":
         raise TargetProfileError("authorization_ref is required")
     scope_text = str(scope).strip() if scope not in (None, "") else canonical_locator
@@ -167,6 +298,7 @@ def build_target_profile(
         "locator": canonical_locator,
         "ports": list(ports),
         "protocols": list(protocols),
+        "stage": stage,
     }).encode("utf-8")).hexdigest()[:16]
     return TargetProfile(
         target_id=target_id,
@@ -177,7 +309,8 @@ def build_target_profile(
         allowed_protocols=protocols,
         scope=scope_text,
         authorization_ref=authorization_ref.strip(),
-        environment=environment,
+        environment=environment_text,
+        stage=stage,
     )
 
 
@@ -241,6 +374,13 @@ def set_target_store(store: Optional[TargetStore]) -> None:
 __all__ = [
     "ALLOWED_PLATFORMS",
     "ALLOWED_PROTOCOLS",
+    "ISOLATED_ENVIRONMENTS",
+    "ISOLATED_ENVIRONMENT",
+    "PLATFORM_SPECS",
+    "PlatformSpec",
+    "TARGET_STAGE_AUTHORIZED",
+    "TARGET_STAGE_DISCOVERY",
+    "TARGET_STAGES",
     "TargetProfile",
     "TargetProfileError",
     "TargetStore",

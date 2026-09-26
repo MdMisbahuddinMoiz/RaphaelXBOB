@@ -52,6 +52,11 @@ class Capability(str, Enum):
     #: alter NETWORK_HTTP_REQUEST. Authorization requires a mission-bound
     #: TargetProfile with protocol "telnet"; output is untrusted evidence.
     NETWORK_TELNET_SESSION = "network_telnet_session"
+    #: D13+: governed service/port discovery (stdlib TCP connect only).
+    #: Authorization requires a mission-bound TargetProfile; the host must
+    #: match the declared locator; port range is operator-declared. Output is
+    #: UNTRUSTED evidence usable by the Planner for TargetProfile refinement.
+    NETWORK_SERVICE_DISCOVERY = "network_service_discovery"
 
 
 CapabilityId: TypeAlias = Capability | str

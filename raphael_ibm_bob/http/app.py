@@ -464,6 +464,9 @@ def build_router() -> Router:
     router.add("GET", "/htb/target", htb.get_target)
     router.add("POST", "/htb/target", htb.set_target)
     router.add("POST", "/htb/target/clear", htb.clear_target)
+    # D13+ — governed service discovery (literal route; must precede any
+    # /htb/{param} pattern to avoid route-match ambiguity).
+    router.add("POST", "/htb/discover", htb.discover_services)
     return router
 
 

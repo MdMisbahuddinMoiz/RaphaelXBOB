@@ -583,8 +583,9 @@ def run_canonical_demo(
         if mode in ("baseline", "refuse"):
             print("    replanning_skipped=True (mode=baseline: honest failure signature)")
             _persist_probe_proof(ledger, ok=False)
-            _persist_regression_proof(ledger, ok=True)
+            _persist_regression_proof(ledger, ok=bool(test_login_ok))
             probe_ok_final = False
+            regression_ok_final = bool(test_login_ok)
         else:
             records = ledger.records_for_finding("F-authkit")
             receipts: List[EvidenceReceipt] = []
@@ -624,11 +625,12 @@ def run_canonical_demo(
             )
             probe_ok_v2, _ = _run_probe_subprocess()
             _persist_probe_proof(ledger, ok=probe_ok_v2)
-            _persist_regression_proof(ledger, ok=True)
+            _persist_regression_proof(ledger, ok=(test_login_ok2 and test_auth_ok))
 
             print(f"    regression_tests: test_login={'PASS' if test_login_ok2 else 'FAIL'}, test_auth={'PASS' if test_auth_ok else 'FAIL'}")
             print(f"    independent_oracle: probe={'PASS' if probe_ok_v2 else 'FAIL'} (all 10/10 scenarios passed)")
             probe_ok_final = probe_ok_v2
+            regression_ok_final = bool(test_login_ok2 and test_auth_ok)
 
         # [13] QualityGate
         print("\n[13] QualityGate")
@@ -636,7 +638,7 @@ def run_canonical_demo(
             GateInputs(
                 mission=mission,
                 findings=list(store.all()),
-                regression_ok=True,
+                regression_ok=regression_ok_final,
                 behavior_probe_ok=probe_ok_final,
             )
         )

@@ -48,6 +48,28 @@ _PASSING_TEST = textwrap.dedent('''
         def test_ok(self):
             self.assertTrue(True)
 ''').strip() + "\n"
+def _latest_bound_execution(ledger: EvidenceLedger):
+    """(request_seq, decision_seq, result_seq) of the latest ALLOWed success."""
+    records = ledger.all_records()
+    decisions = {r.get("request_seq"): r.get("decision") for r in records
+                 if r.get("kind") == "decision"}
+    results = {r.get("request_seq"): r for r in records
+                 if r.get("kind") == "result"}
+    req_seq = None
+    for r in records:
+        if r.get("kind") != "request":
+            continue
+        seq = r.get("seq")
+        if (decisions.get(seq) == "allow"
+                and results.get(seq, {}).get("success") is True):
+            req_seq = seq
+    if req_seq is None:
+        return 0, 0, None
+    decs = [r for r in records if r.get("kind") == "decision"
+            and r.get("request_seq") == req_seq]
+    dec_seq = decs[-1].get("seq") if decs else 0
+    res_seq = (results.get(req_seq) or {}).get("seq")
+    return req_seq, dec_seq, res_seq
 
 
 def _step(idx: int, label: str, detail: str = "") -> None:
@@ -58,18 +80,21 @@ def _step(idx: int, label: str, detail: str = "") -> None:
 
 
 def _persist_probe(ledger, ok: bool) -> None:
+    req_seq, dec_seq, res_seq = _latest_bound_execution(ledger)
     payload = {"kind": "probe", "result": "passed" if ok else "failed",
-               "allowed": ok}
+               "allowed": ok, "request_seq": req_seq, "decision_seq": dec_seq, "result_seq": res_seq}
     ledger.append_evidence(
         evidence_id=digest_id(payload, prefix="PB"), producer="probe",
-        request_seq=0, decision_seq=0, result_seq=None, payload=payload)
+        request_seq=req_seq, decision_seq=dec_seq, result_seq=res_seq, payload=payload)
 
 
 def _persist_regression(ledger, ok: bool) -> None:
-    payload = {"kind": "regression", "result": "passed" if ok else "failed"}
+    req_seq, dec_seq, res_seq = _latest_bound_execution(ledger)
+    payload = {"kind": "regression", "result": "passed" if ok else "failed",
+               "request_seq": req_seq, "decision_seq": dec_seq, "result_seq": res_seq}
     ledger.append_evidence(
         evidence_id=digest_id(payload, prefix="RG"), producer="regression",
-        request_seq=0, decision_seq=0, result_seq=None, payload=payload)
+        request_seq=req_seq, decision_seq=dec_seq, result_seq=res_seq, payload=payload)
 
 
 def run_demo(keep: bool = False) -> int:
@@ -131,13 +156,15 @@ def run_demo(keep: bool = False) -> int:
             target=str(test_file), purpose="required-test"), mission)
         _step(3, "test", f"success={test_result.execution.success}")
 
-        _persist_probe(ledger, ok=True)
-        _persist_regression(ledger, ok=True)
+        # This demo exercises the governed C1A provider path only; it never runs
+        # the independent behaviour probe, so it must not claim one.
+        _persist_probe(ledger, ok=False)
+        _persist_regression(ledger, ok=test_result.execution.success)
 
         _step(4, "QualityGate")
         evaluation = BOBQualityGate(ledger).evaluate(GateInputs(
-            mission=mission, findings=[], regression_ok=True,
-            behavior_probe_ok=True))
+            mission=mission, findings=[], regression_ok=test_result.execution.success,
+            behavior_probe_ok=False))
         _step(4, "verdict",
               f"verdict={evaluation.verdict.value} "
               f"failed={list(evaluation.failed)}")

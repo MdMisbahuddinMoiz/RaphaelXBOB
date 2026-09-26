@@ -196,10 +196,28 @@ PHASE_PLANS = {
     ],
 }
 
+# ---------------------------------------------------------------------------
+# CREDENTIAL REVOCATION NOTICE (added during submission hardening)
+#
+# The literal SSH credential previously present at this location has been
+# REDACTED from the working tree. It was a credential recovered during a
+# historical, authorized VulnHub lab engagement ("Stapler").
+#
+# TREAT IT AS COMPROMISED AND REVOKED. Do not reuse it.
+#
+# IMPORTANT — THIS DOES NOT PURGE GIT HISTORY:
+#   The original value remains in commit a1f5769f1 and therefore in every
+#   clone of this repository. Redacting the working tree only prevents
+#   casual disclosure. Complete removal requires a history rewrite
+#   (git filter-repo / BFG) or accepting the documented exposure.
+#
+# This file is LEGACY/RESEARCH RESIDUE. It is NOT part of the shipped
+# distribution: pyproject.toml packages only `raphael_ibm_bob`.
+# ---------------------------------------------------------------------------
 # Placeholders resolved dynamically from evidence (cognition).
-# peter:JZQuyIN5 recovered from www-data bash_history (walkthrough-verified path:
+# peter:«REDACTED» recovered from www-data bash_history (walkthrough-verified path:
 # MySQL INTO OUTFILE php shell -> bash_history -> peter creds -> sudo (ALL:ALL) ALL -> root).
-SSH_CRED = {"user": "peter", "password": "JZQuyIN5"}
+SSH_CRED = {"user": "peter", "password": "REVOKED-SEE-NOTE-BELOW"}
 
 
 class ManualValidator:

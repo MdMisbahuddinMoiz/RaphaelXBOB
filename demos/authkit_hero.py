@@ -469,7 +469,7 @@ def run_hero(keep: bool = False,
         runtime, mission, "fixtures/authkit/test_auth.py")
     probe_ok_v2, _ = _run_probe_subprocess()
     _persist_probe_proof(ledger, ok=probe_ok_v2)
-    _persist_regression_proof(ledger, ok=True)
+    _persist_regression_proof(ledger, ok=(test_login_ok2 and test_auth_ok))
     _step(11, "Final verification",
           f"test_login={'PASS' if test_login_ok2 else 'FAIL'} "
           f"({test_login_detail2}) "
@@ -481,7 +481,7 @@ def run_hero(keep: bool = False,
     findings = list(store.all())
     evaluation = gate.evaluate(GateInputs(
         mission=mission, findings=findings,
-        regression_ok=True, behavior_probe_ok=probe_ok_v2,
+        regression_ok=(test_login_ok2 and test_auth_ok), behavior_probe_ok=probe_ok_v2,
     ))
     _step(12, "QualityGate -> " + evaluation.verdict.value.upper(),
           f"passed={list(evaluation.passed)} failed={list(evaluation.failed)}")
@@ -580,13 +580,13 @@ def run_baseline(runs_root: Optional[Path] = None) -> int:
     print("[B05] Independent probe runs as oracle (expected red on v1)")
     probe_ok, _ = _run_probe_subprocess()
     _persist_probe_proof(ledger, ok=probe_ok)
-    _persist_regression_proof(ledger, ok=True)
+    _persist_regression_proof(ledger, ok=test_ok)
     print(f"     probe={'PASS' if probe_ok else 'FAIL'}")
 
     print("[B06] QualityGate")
     evaluation = gate.evaluate(GateInputs(
         mission=mission, findings=list(store.all()),
-        regression_ok=True, behavior_probe_ok=probe_ok,
+        regression_ok=test_ok, behavior_probe_ok=probe_ok,
     ))
     print(f"     verdict={evaluation.verdict.value.upper()} "
           f"failed={list(evaluation.failed)}")

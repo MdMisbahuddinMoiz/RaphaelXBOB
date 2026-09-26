@@ -18,6 +18,7 @@ and persists the corresponding evidence record.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,6 +50,7 @@ from raphael_ibm_bob.harness.session import RaphaelSession, save_session
 from raphael_ibm_bob.policy import BOBPolicy
 from raphael_ibm_bob.quality_gate import BOBQualityGate, GateInputs
 from raphael_ibm_bob.runtime import BOBRuntime
+from raphael_ibm_bob.seal import write_seal
 from raphael_ibm_bob.specialization import (
     TaskState,
     decompose_mission,
@@ -58,6 +60,27 @@ from raphael_ibm_bob.verifier import RetestSpec, Verifier
 from raphael_ibm_bob.workspace import Workspace
 
 ProbeCallable = Callable[[], bool]
+
+_log = logging.getLogger(__name__)
+
+
+def _try_write_seal(run_dir: Path) -> None:
+    """Write seal.json after ledger close; never raises.
+
+    Mirrors ``network_run._try_write_seal`` so an AI-assisted run carries
+    the same tamper-evident hash chain as a network run. Without this the
+    model path left ``verify_seal`` reporting ``missing-seal``. A seal
+    failure is logged, never fatal: it must not alter the run's verdict,
+    state, or evidence records.
+    """
+    try:
+        write_seal(run_dir)
+    except Exception as exc:  # noqa: BLE001 — intentional fail-safe
+        _log.warning(
+            "seal write failed for run %s: %s: %s",
+            run_dir.name, type(exc).__name__, exc,
+        )
+
 
 #: Single source of truth for the model-loop turn bound. Referenced by
 #: `harness.api.start_model_run` and the HTTP layer so an omitted
@@ -408,11 +431,13 @@ def run_model_mission(session: RaphaelSession, mission: Mission,
         run.finished_at = _utcnow()
         save_run(run)
         ledger.close()
+        _try_write_seal(run_dir)
         if sessions_root is not None:
             save_session(session, sessions_root)
         raise
     save_run(run)
     ledger.close()
+    _try_write_seal(run_dir)
     if sessions_root is not None:
         save_session(session, sessions_root)
     task_plan = plan.to_dict() if plan is not None else None

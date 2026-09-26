@@ -16,6 +16,8 @@ from typing import Any, Dict, List
 from raphael_ibm_bob.harness import api
 from raphael_ibm_bob.http.views import decision_trace as dt
 from raphael_ibm_bob.http.views import event_stream as _stream
+from raphael_ibm_bob.target_profile import TARGET_STAGE_AUTHORIZED, \
+    TARGET_STAGE_DISCOVERY
 
 HTML = "text/html; charset=utf-8"
 
@@ -87,6 +89,11 @@ margin-top:10px}
 text-transform:uppercase;letter-spacing:.05em}
 .targetform input{font:inherit;background:var(--bg);color:var(--text);
 border:1px solid var(--border);border-radius:3px;padding:7px 9px}
+.disc-block{margin-top:14px;padding-top:10px;
+border-top:1px solid var(--border)}
+.disc-block .hint{line-height:1.5;margin:0 0 8px}
+.disc-block .crit{color:var(--crit)}
+.disc-block table{margin-top:8px}
 """
 
 
@@ -226,26 +233,147 @@ _TARGET_JS = r"""
   }
   function val(id){ var e = document.getElementById(id); return e ? e.value.trim() : ''; }
   function hint(t){ var e = document.getElementById('tg-hint'); if (e) e.textContent = t; }
-  form.addEventListener('submit', async function(ev){
-    ev.preventDefault();
+  function dhint(t){ var e = document.getElementById('tg-disc-hint'); if (e) e.textContent = t; }
+  function esc(s){
+    return String(s === null || s === undefined ? '' : s)
+      .replace(/[&<>"']/g, function(c){
+        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',
+                "'":'&#39;'}[c];
+      });
+  }
+  function kv(k, v){
+    return '<div class="kv"><span class="k">' + esc(k) + '</span>'
+      + '<span class="v">' + v + '</span></div>';
+  }
+
+  // A blank ALLOWED PORTS field means the operator has declared the host
+  // only, so the profile is saved at the discovery stage. It authorizes
+  // NETWORK_SERVICE_DISCOVERY and nothing else until it is refined.
+  function saveTarget(){
     var body = {
       mission_id: val('tg-mission'),
       locator: val('tg-locator'),
       allowed_ports: val('tg-ports'),
       allowed_protocols: val('tg-protocols'),
       scope: val('tg-scope'),
-      authorization_ref: val('tg-auth')
+      authorization_ref: val('tg-auth'),
+      stage: val('tg-ports') === '' ? 'discovery' : 'authorized'
     };
-    try {
-      var r = await fetch('/htb/target', {
-        method:'POST', headers: hdr({'Content-Type':'application/json'}),
-        body: JSON.stringify(body)
-      });
-      var b = await r.json().catch(function(){ return {}; });
-      if (!r.ok) { hint((b.error && b.error.message) || 'target rejected'); return; }
+    return fetch('/htb/target', {
+      method:'POST', headers: hdr({'Content-Type':'application/json'}),
+      body: JSON.stringify(body)
+    }).then(function(r){
+      return r.json().catch(function(){ return {}; })
+        .then(function(b){ return {ok: r.ok, body: b}; });
+    });
+  }
+
+  form.addEventListener('submit', function(ev){
+    ev.preventDefault();
+    saveTarget().then(function(res){
+      if (!res.ok) {
+        hint((res.body.error && res.body.error.message) || 'target rejected');
+        return;
+      }
       location.reload();
-    } catch(e) { hint('target update failed'); }
+    }).catch(function(){ hint('target update failed'); });
   });
+
+  var apply = document.getElementById('tg-apply');
+  if (apply) {
+    apply.addEventListener('click', function(){
+      var p = apply.getAttribute('data-ports') || '';
+      var pr = apply.getAttribute('data-protocols') || '';
+      if (p) { document.getElementById('tg-ports').value = p; }
+      if (pr) { document.getElementById('tg-protocols').value = pr; }
+      dhint('applying discovered scope to the target…');
+      saveTarget().then(function(res){
+        if (!res.ok) {
+          dhint((res.body.error && res.body.error.message)
+                || 'scope refinement rejected');
+          return;
+        }
+        location.reload();
+      }).catch(function(){ dhint('scope refinement failed'); });
+    });
+  }
+
+  var disc = document.getElementById('tg-discover');
+  if (disc) {
+    disc.addEventListener('click', function(){
+      var host = val('tg-locator');
+      if (!host) { dhint('host / IP is required'); return; }
+      disc.setAttribute('disabled', 'disabled');
+      dhint('running governed discovery…');
+      var out = document.getElementById('tg-disc-result');
+      if (out) { out.innerHTML = ''; }
+      fetch('/htb/discover', {
+        method:'POST', headers: hdr({'Content-Type':'application/json'}),
+        body: JSON.stringify({
+          host: host, mission_id: val('tg-mission'),
+          port_spec: val('tg-disc-ports')
+        })
+      }).then(function(r){
+        return r.json().catch(function(){ return {}; })
+          .then(function(b){ return {ok: r.ok, body: b}; });
+      }).then(function(res){
+        disc.removeAttribute('disabled');
+        renderDiscovery(res.body);
+      }).catch(function(){
+        disc.removeAttribute('disabled');
+        dhint('discovery request failed');
+      });
+    });
+  }
+
+  function renderDiscovery(d){
+    var out = document.getElementById('tg-disc-result');
+    if (!d) { dhint('no discovery result'); return; }
+    if (!d.allowed) {
+      dhint('POLICY DENIED — ' + (d.deny_reason || 'no reason given'));
+      if (out) {
+        out.innerHTML = '<p class="crit">POLICY DENIED &mdash; '
+          + esc(d.deny_reason) + '</p>';
+      }
+      return;
+    }
+    var open = d.ports_open || [];
+    var rows = (d.port_details || []).map(function(p){
+      return '<tr><td class="mono">' + esc(p.port) + '</td>'
+        + '<td class="mono">' + esc(p.service || '—') + '</td>'
+        + '<td class="mono">' + esc(p.state) + '</td>'
+        + '<td class="mono">' + esc(p.latency_ms) + 'ms</td></tr>';
+    }).join('');
+    var table = rows
+      ? ('<table class="dense"><thead><tr><th>PORT</th><th>SERVICE</th>'
+         + '<th>STATE</th><th>LATENCY</th></tr></thead><tbody>' + rows
+         + '</tbody></table>')
+      : '<p class="empty">No open ports.</p>';
+    if (out) {
+      out.innerHTML = '<div class="kvlist">'
+        + kv('STATE', esc(d.state))
+        + kv('HOST', esc(d.host))
+        + kv('PORTS PROBED', esc(d.ports_probed))
+        + kv('PORTS OPEN', esc(open.length ? open.join(', ') : 'none'))
+        + kv('CAPPED', d.capped ? 'yes' : 'no')
+        + kv('INVOCATION', esc(d.invocation_id || '—'))
+        + kv('EVIDENCE CLASS', 'UNTRUSTED')
+        + '</div>' + table;
+    }
+    if (open.length) {
+      if (apply) {
+        apply.removeAttribute('disabled');
+        apply.setAttribute('data-ports', open.join(','));
+        apply.setAttribute('data-protocols',
+                           (d.suggested_protocols || []).join(','));
+      }
+      dhint('discovery complete — apply the discovered ports to the scope');
+    } else {
+      dhint('discovery complete — no open ports ('
+            + (d.error || 'no detail') + ')');
+    }
+  }
+
   var clear = document.getElementById('tg-clear');
   if (clear) clear.addEventListener('click', async function(){
     try { await fetch('/htb/target/clear', {method:'POST', headers: hdr()}); }
@@ -367,12 +495,19 @@ def _htb_context(vpn_status, target_state) -> str:
         target_cell = dt._e(target_state.get("locator"))
         scope_cell = dt._e(target_state.get("scope") or "—")
         ports_cell = dt._e(", ".join(
-            str(p) for p in target_state.get("allowed_ports", [])))
+            str(p) for p in target_state.get("allowed_ports", []))) or "—"
         protos_cell = dt._e(", ".join(
-            str(p) for p in target_state.get("allowed_protocols", [])))
+            str(p) for p in target_state.get("allowed_protocols", []))) or "—"
         auth_cell = (dt._pill("AUTHORIZED", "ok")
                      + ' <span class="muted">(operator-declared)</span>')
         mission_cell = dt._e(target_state.get("mission_id") or "—")
+        discovery_only = bool(target_state.get("discovery_only")) or (
+            target_state.get("stage") == TARGET_STAGE_DISCOVERY)
+        stage_cell = (dt._pill("DISCOVERY ONLY", "info") if discovery_only
+                      else dt._pill("SERVICE AUTHORIZED", "ok"))
+        if discovery_only:
+            stage_cell += (' <span class="muted">— no service port is '
+                           'authorized yet</span>')
     else:
         missing = '<span class="muted">Not configured</span>'
         target_cell = missing
@@ -381,10 +516,12 @@ def _htb_context(vpn_status, target_state) -> str:
         protos_cell = missing
         mission_cell = missing
         auth_cell = dt._pill("NOT CONFIGURED", "muted")
+        stage_cell = missing
     rows = [
         ("VPN", _vpn_badge(vpn_status)),
         ("TARGET", target_cell),
         ("SCOPE", scope_cell),
+        ("STAGE", stage_cell),
         ("PORTS", ports_cell),
         ("PROTOCOLS", protos_cell),
         ("AUTHORIZATION", auth_cell),
@@ -409,23 +546,29 @@ def _htb_target_form(target_state) -> str:
         value = t.get(key)
         return dt._e(value) if value not in (None, "") else default
 
+    stage = t.get("stage") or TARGET_STAGE_AUTHORIZED
     ports = (", ".join(str(p) for p in t.get("allowed_ports", []))
-             if t else "80,443")
+             if t else "")
     protos = (", ".join(str(p) for p in t.get("allowed_protocols", []))
-              if t else "http,https")
+              if t else "")
     return (
         '<form class="targetform" id="htb-target-form">'
         '<div class="sublabel">DECLARE AUTHORIZED TARGET</div>'
         '<p class="hint">Authorization is operator-declared for this '
-        'authorized lab. Network actions are still gated by Policy.</p>'
+        'authorized lab. Network actions are still gated by Policy. '
+        'Leave ports and protocols <strong>blank</strong> to declare the '
+        'host only; governed <strong>DISCOVER SERVICES</strong> then '
+        'populates them from real target evidence.</p>'
         '<label>MISSION ID<input name="mission_id" id="tg-mission" '
         f'value="{v("mission_id")}" required></label>'
         '<label>HOST / IP<input name="locator" id="tg-locator" '
         f'value="{v("locator")}" placeholder="10.129.x.x" required></label>'
-        '<label>ALLOWED PORTS<input name="allowed_ports" id="tg-ports" '
-        f'value="{dt._e(ports)}" required></label>'
-        '<label>ALLOWED PROTOCOLS<input name="allowed_protocols" '
-        f'id="tg-protocols" value="{dt._e(protos)}" required></label>'
+        '<label>ALLOWED PORTS <span class="muted">&mdash; blank until '
+        'discovered</span><input name="allowed_ports" id="tg-ports" '
+        f'value="{dt._e(ports)}"></label>'
+        '<label>ALLOWED PROTOCOLS <span class="muted">&mdash; blank until '
+        'discovered</span><input name="allowed_protocols" '
+        f'id="tg-protocols" value="{dt._e(protos)}"></label>'
         '<label>SCOPE (host / CIDR, optional)<input name="scope" '
         f'id="tg-scope" value="{v("scope")}"></label>'
         '<label>AUTHORIZATION REFERENCE<input name="authorization_ref" '
@@ -434,7 +577,33 @@ def _htb_target_form(target_state) -> str:
         '<button class="btn" type="submit">SAVE TARGET</button>'
         '<button class="btn crit" type="button" id="tg-clear">CLEAR</button>'
         '<span class="hint" id="tg-hint"></span>'
-        '</div></form>')
+        '</div>'
+        + _discovery_block(stage) +
+        '</form>')
+
+
+def _discovery_block(stage: str) -> str:
+    return (
+        '<div class="disc-block" id="tg-disc-block">'
+        '<div class="sublabel">GOVERNED SERVICE DISCOVERY</div>'
+        '<p class="hint">NETWORK_SERVICE_DISCOVERY travels UI &rarr; '
+        'Runtime &rarr; Broker &rarr; Policy &rarr; DiscoveryMediator. '
+        'Bounded stdlib TCP probes against the declared host only &mdash; '
+        'no shell, no subprocess, no nmap. Results are UNTRUSTED evidence, '
+        'never a verdict.</p>'
+        '<label>DISCOVERY PORT SCOPE <span class="muted">&mdash; blank = '
+        'well-known ports, or e.g. 1-1024</span>'
+        '<input id="tg-disc-ports" placeholder="blank = well-known ports">'
+        '</label>'
+        '<div class="mode-actions">'
+        '<button class="btn" type="button" id="tg-discover">'
+        'DISCOVER SERVICES</button>'
+        '<button class="btn" type="button" id="tg-apply" disabled>'
+        'APPLY TO TARGET SCOPE</button>'
+        '<span class="hint" id="tg-disc-hint"></span>'
+        '</div>'
+        '<div id="tg-disc-result"></div>'
+        '</div>')
 
 
 def _mode_panel(mode_state, vpn_status, target_state=None) -> str:

@@ -179,9 +179,10 @@ class RegistryTests(_Case):
         reg = CapabilityRegistry()
         register_default(reg)
         log = reg.registration_log()
-        self.assertEqual(len(log), 2)
+        self.assertEqual(len(log), 3)
         self.assertEqual({e["capability_id"] for e in log},
-                         {"NETWORK_HTTP_REQUEST", "NETWORK_TELNET_SESSION"})
+                         {"NETWORK_HTTP_REQUEST", "NETWORK_TELNET_SESSION",
+                          "NETWORK_SERVICE_DISCOVERY"})
 
 
 class TargetModelTests(_Case):
@@ -380,15 +381,17 @@ class SelectorTests(_Case):
 
 
 class SshProofTests(_Case):
-    def test_registering_ssh_adds_a_third_capability(self):
+    def test_registering_ssh_adds_a_fourth_capability(self):
         reg = CapabilityRegistry()
         register_default(reg)
         self.assertEqual({d.capability_id for d in reg.all_capabilities()},
-                         {"NETWORK_HTTP_REQUEST", "NETWORK_TELNET_SESSION"})
+                         {"NETWORK_HTTP_REQUEST", "NETWORK_TELNET_SESSION",
+                          "NETWORK_SERVICE_DISCOVERY"})
         register_ssh(reg)
         ids = {d.capability_id for d in reg.all_capabilities()}
         self.assertEqual(ids, {"NETWORK_HTTP_REQUEST",
                                "NETWORK_TELNET_SESSION",
+                               "NETWORK_SERVICE_DISCOVERY",
                                "NETWORK_SSH_SESSION"})
 
     def test_ssh_is_discovered_from_facts(self):

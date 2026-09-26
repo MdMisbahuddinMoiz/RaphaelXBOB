@@ -35,6 +35,7 @@ Remaining limitations at M3:
 from __future__ import annotations
 
 import hashlib
+import math
 import threading
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
@@ -65,6 +66,9 @@ from raphael_ibm_bob.network_runtime import (
 from raphael_ibm_bob.telnet_runtime import (
     build_telnet_spec,
     get_telnet_mediator,
+)
+from raphael_ibm_bob.discovery_runtime import (
+    get_discovery_mediator,
 )
 from raphael_ibm_bob.target_profile import get_target_store
 from raphael_ibm_bob.capability_registry import (
@@ -124,6 +128,7 @@ class BOBBroker:
         network_mediator: Optional[Any] = None,
         target_store: Optional[Any] = None,
         telnet_mediator: Optional[Any] = None,
+        discovery_mediator: Optional[Any] = None,
         registry: Optional[CapabilityRegistry] = None,
     ):
         self._policy = policy
@@ -151,6 +156,8 @@ class BOBBroker:
         self._target_store = target_store
         # D12: governed Telnet boundary (its own mediator; additive).
         self._telnet_mediator = telnet_mediator
+        # D13+: governed service discovery boundary (additive).
+        self._discovery_mediator = discovery_mediator
         self._registry = registry
         if self._registry is None:
             from raphael_ibm_bob.capability_bootstrap import register_default
@@ -194,6 +201,7 @@ class BOBBroker:
             "C1A_STATIC_FILE_INSPECT": "c1a",
             "NETWORK_HTTP_REQUEST": "network",
             "NETWORK_TELNET_SESSION": "telnet",
+            "NETWORK_SERVICE_DISCOVERY": "discovery",
             "READ": "native",
             "LIST": "native",
             "SEARCH": "native",
@@ -244,11 +252,22 @@ class BOBBroker:
     # Broker.seam interface ----------------------------------------------------
 
     def submit(self, request: ActionRequest, mission: Mission) -> BrokerResult:
-        if (request.timeout_seconds is not None
-                and request.timeout_seconds <= 0):
-            raise ValueError(
-                "ActionRequest.timeout_seconds must be positive, got "
-                f"{request.timeout_seconds!r}")
+        # Fail-closed timeout check. A bare ``<= 0`` test is NOT sufficient:
+        # NaN and +/-inf both compare false against it yet would be stamped
+        # onto the request and persisted to the ledger. Enforced here, at the
+        # single governed entrypoint, so it covers every capability -- the
+        # network/telnet/discovery authorizers re-check it via Policy, the
+        # path-scoped ones (READ/LIST/SEARCH/WRITE/RUN_TEST) and C1A do not.
+        # ``None`` means "use the broker default" and stays valid.
+        if request.timeout_seconds is not None:
+            timeout = request.timeout_seconds
+            if (isinstance(timeout, bool)
+                    or not isinstance(timeout, (int, float))
+                    or not math.isfinite(timeout)
+                    or timeout <= 0):
+                raise ValueError(
+                    "ActionRequest.timeout_seconds must be a finite positive "
+                    f"real number, got {timeout!r}")
         # T1-4: resolve the execution bound before anything else so the
         # stamped request, the decision evidence, and the capability
         # invocation all observe the same value.
@@ -310,7 +329,7 @@ class BOBBroker:
             payload = {
                 "decision": decision.decision.value,
                 "reason": decision.reason,
-                "capability": decision.capability.value,
+                "capability": capability_id(decision.capability),
                 "target": decision.target,
                 "request_seq": request_seq,
                 "decision_seq": decision_seq,
@@ -371,6 +390,11 @@ class BOBBroker:
                 decision=decision)
         if kind == "telnet":
             return self._execute_telnet(
+                stamped=request, mission=mission, request_seq=request_seq,
+                decision_seq=decision_seq, evidence_ids=evidence_ids,
+                decision=decision)
+        if kind == "discovery":
+            return self._execute_discovery(
                 stamped=request, mission=mission, request_seq=request_seq,
                 decision_seq=decision_seq, evidence_ids=evidence_ids,
                 decision=decision)
@@ -857,6 +881,102 @@ class BOBBroker:
                 evidence_id=exec_ev_id, producer="telnet",
                 request_seq=request_seq, decision_seq=decision_seq,
                 result_seq=result_seq, payload=telnet_payload)
+            evidence_ids.append(exec_ev_id)
+
+        return BrokerResult(
+            decision=decision, execution=execution, capability_invoked=True,
+            request_seq=request_seq, decision_seq=decision_seq,
+            result_seq=result_seq, evidence_ids=tuple(evidence_ids))
+
+    # D13+ governed discovery path ----------------------------------------
+
+    def _execute_discovery(
+        self,
+        *,
+        stamped: ActionRequest,
+        mission: Mission,
+        request_seq: int,
+        decision_seq: int,
+        evidence_ids: List[str],
+        decision: PolicyDecision,
+    ) -> BrokerResult:
+        """Execute one governed discovery invocation through the DiscoveryMediator.
+
+        The ONLY path for the NETWORK_SERVICE_DISCOVERY capability. Validates
+        scope, delegates bounded TCP probes to the mediator (the only
+        discovery-I/O boundary), and persists UNTRUSTED discovery evidence.
+        It never calls execute_capability and never spawns a subprocess.
+        """
+        from raphael_ibm_bob.discovery_runtime import DiscoveryState, PROVIDER_UNTRUSTED as _DPU
+
+        run_id = (self._ledger.run_dir().name
+                  if self._ledger is not None else "in-memory")
+        mediator = self._discovery_mediator or get_discovery_mediator()
+        store = (self._target_store if self._target_store is not None
+                 else get_target_store())
+        profile = store.get_target(mission.mission_id)
+
+        if profile is None:
+            execution = ExecutionResult(
+                sequence=stamped.sequence, success=False, output="",
+                error="discovery-no-authorized-target",
+                evidence={PROVIDER_UNTRUSTED: True})
+        else:
+            invocation_id = "DSC-" + hashlib.sha256(
+                f"{run_id}:{stamped.sequence}".encode("utf-8")
+            ).hexdigest()[:16]
+            result = mediator.invoke(
+                request=stamped, profile=profile,
+                invocation_id=invocation_id, run_id=run_id,
+                decision=decision)
+            data = result.to_dict()
+            evidence: Dict[str, Any] = {
+                "discovery_result": data,
+                PROVIDER_UNTRUSTED: True,
+                "capability": Capability.NETWORK_SERVICE_DISCOVERY.value,
+                "invocation_id": result.invocation_id,
+                "mission_id": result.mission_id,
+                "target_id": result.target_id,
+                "host": result.host,
+                "ports_probed": result.ports_probed,
+                "ports_open": list(result.ports_open),
+                "capped": result.capped,
+            }
+            is_success = result.state is DiscoveryState.SUCCESS
+            execution = ExecutionResult(
+                sequence=stamped.sequence,
+                success=is_success,
+                output=(f"discovery:{result.state.value}"
+                        f" ports_open={len(result.ports_open)}"),
+                error=(result.error or None),
+                evidence=evidence)
+
+        with self._lock:
+            self.capability_invocations += 1
+            self.audit.append({"stage": "execution", **execution.to_dict()})
+
+        result_seq: Optional[int] = None
+        if self._ledger is not None:
+            result_seq = self._ledger.append_result(
+                request_seq=request_seq, decision_seq=decision_seq,
+                result=execution)
+            discovery_payload = dict(execution.evidence)
+            discovery_payload.update({
+                "request_seq": request_seq,
+                "decision_seq": decision_seq,
+                "result_seq": result_seq,
+            })
+            exec_ev_id = digest_id({
+                "request_seq": request_seq,
+                "decision_seq": decision_seq,
+                "result_seq": result_seq,
+                "invocation_id": execution.evidence.get("invocation_id"),
+                "capability": Capability.NETWORK_SERVICE_DISCOVERY.value,
+            }, prefix="DX")
+            self._ledger.append_evidence(
+                evidence_id=exec_ev_id, producer="discovery",
+                request_seq=request_seq, decision_seq=decision_seq,
+                result_seq=result_seq, payload=discovery_payload)
             evidence_ids.append(exec_ev_id)
 
         return BrokerResult(

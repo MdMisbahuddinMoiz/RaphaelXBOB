@@ -49,9 +49,17 @@ _ALL_CAPABILITY_IDS = frozenset(
 )
 
 
+def _authorization_predicate(descriptor: CapabilityDescriptor) -> str:
+    for prerequisite in descriptor.prerequisite_specs():
+        if prerequisite.kind == "authorization":
+            return prerequisite.predicate
+    return descriptor.protocol
+
+
 def _facts(protocol: str, *, service: bool = True,
            authorized: bool = True,
-           service_state: str = "open") -> TargetFacts:
+           service_state: str = "open",
+           authorization_predicate: str | None = None) -> TargetFacts:
     facts = TargetFacts(target_id="target-d15", host="198.51.100.15")
     if service:
         facts.add_service(ServiceRecord(
@@ -63,7 +71,8 @@ def _facts(protocol: str, *, service: bool = True,
     if authorized:
         facts.authorization = AuthorizationScope(
             target_host=facts.host,
-            authorized_protocols=frozenset({protocol}),
+            authorized_protocols=frozenset(
+                {authorization_predicate or protocol}),
             authorized_ports=frozenset({443}),
             engagement_id="E-D15",
             scope_document_ref="scope://d15",
@@ -104,12 +113,19 @@ class D15ApplicabilityTests(unittest.TestCase):
                     if prerequisite.kind == "credential"
                 ]
                 result = PrerequisiteEngine().evaluate(
-                    descriptor, _facts(descriptor.protocol),
+                    descriptor,
+                    _facts(descriptor.protocol,
+                           authorization_predicate=_authorization_predicate(
+                               descriptor)),
                     credential_refs=credential_refs,
                 )
                 self.assertTrue(result.satisfied, result.missing)
                 self.assertEqual(
-                    _selector_plan(descriptor, _facts(descriptor.protocol)),
+                    _selector_plan(
+                        descriptor,
+                        _facts(descriptor.protocol,
+                               authorization_predicate=_authorization_predicate(
+                                   descriptor))),
                     [descriptor.capability_id],
                 )
 
@@ -198,7 +214,8 @@ class D15ApplicabilityTests(unittest.TestCase):
                 ))
             facts.authorization = AuthorizationScope(
                 target_host=facts.host,
-                authorized_protocols=frozenset(d.protocol for d in ordered),
+                authorized_protocols=frozenset(
+                    _authorization_predicate(d) for d in ordered),
                 authorized_ports=frozenset({443}),
                 engagement_id="E-D15",
                 scope_document_ref="scope://d15",

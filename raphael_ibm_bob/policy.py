@@ -31,6 +31,7 @@ Legacy semantics:
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
@@ -47,15 +48,18 @@ from raphael_ibm_bob.c1a_scope import scope_contains, within_root
 from raphael_ibm_bob.network_runtime import ALLOWED_METHODS, method_from_purpose
 from raphael_ibm_bob.network_scope import (
     NetworkScopeError,
+    canonical_host,
+    host_in_scope,
     parse_http_target,
     parse_telnet_target,
 )
+from raphael_ibm_bob.discovery_runtime import MAX_DISCOVERY_PORTS, _parse_port_spec
 from raphael_ibm_bob.telnet_runtime import (
     build_telnet_spec,
     command_from_purpose,
     validate_command,
 )
-from raphael_ibm_bob.target_profile import get_target_store
+from raphael_ibm_bob.target_profile import TARGET_STAGES, get_target_store
 from raphael_ibm_bob.workspace import Workspace
 
 
@@ -63,6 +67,21 @@ from raphael_ibm_bob.workspace import Workspace
 class PolicyCapabilityMetadata:
     scope: str = "path"
     authorizer: Callable[[ActionRequest, Mission, Path | None], PolicyDecision] | None = None
+
+
+def _timeout_is_valid(value: object) -> bool:
+    """True iff a request timeout is a finite positive real number.
+
+    ``None`` means "use the broker default" and is accepted. NaN and the
+    infinities are rejected: they compare false against ``<= 0`` yet would
+    reach the ledger as a non-JSON-serializable value, so this is a
+    fail-closed check rather than cosmetic validation.
+    """
+    if value is None:
+        return True
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(value) and value > 0
 
 
 class BOBPolicy:
@@ -99,6 +118,8 @@ class BOBPolicy:
                 scope="network", authorizer=self._consult_network),
             Capability.NETWORK_TELNET_SESSION.value: PolicyCapabilityMetadata(
                 scope="network", authorizer=self._consult_telnet),
+            Capability.NETWORK_SERVICE_DISCOVERY.value: PolicyCapabilityMetadata(
+                scope="network", authorizer=self._consult_discovery),
         }
 
     def consult(self, request: ActionRequest, mission: Mission) -> PolicyDecision:
@@ -180,10 +201,7 @@ class BOBPolicy:
             return self._deny(request, f"network-method-not-allowed:{method}")
         # The mediator always enforces its own bounded timeout; a missing
         # request timeout is acceptable (resolved by the broker default).
-        if (request.timeout_seconds is not None
-                and (isinstance(request.timeout_seconds, bool)
-                     or not isinstance(request.timeout_seconds, (int, float))
-                     or request.timeout_seconds <= 0)):
+        if not _timeout_is_valid(request.timeout_seconds):
             return self._deny(request, "network-timeout-invalid")
         return self._allow(request)
 
@@ -211,10 +229,7 @@ class BOBPolicy:
         if not profile.allows(host=target.host, port=target.port,
                               protocol="telnet"):
             return self._deny(request, "telnet-target-mismatch")
-        if (request.timeout_seconds is not None
-                and (isinstance(request.timeout_seconds, bool)
-                     or not isinstance(request.timeout_seconds, (int, float))
-                     or request.timeout_seconds <= 0)):
+        if not _timeout_is_valid(request.timeout_seconds):
             return self._deny(request, "telnet-timeout-invalid")
         spec = build_telnet_spec(mission, profile)
         if spec is None:
@@ -224,6 +239,51 @@ class BOBPolicy:
         ok, why = validate_command(command, spec.authorized_commands())
         if not ok:
             return self._deny(request, f"telnet-command-rejected:{why}")
+        return self._allow(request)
+
+    def _consult_discovery(
+        self, request: ActionRequest, mission: Mission,
+        _resolved: Path | None = None,
+    ) -> PolicyDecision:
+        """Governed service discovery authorization (fail closed).
+
+        The target must be a plain host/IP matching the mission-bound
+        TargetProfile locator exactly. No port in the target string —
+        the port list is carried in the ActionRequest purpose as
+        ``ports=<spec>``. The profile may be at either lifecycle stage
+        (an IP-only ``discovery`` profile is exactly what makes discovery
+        reachable before the ports are known). Any failure is a DENY.
+        """
+        store = self._target_store or get_target_store()
+        profile = store.get_target(mission.mission_id)
+        if profile is None:
+            return self._deny(request, "discovery-no-authorized-target")
+        if not profile.authorization_ref:
+            return self._deny(request, "discovery-authorization-missing")
+        if profile.stage not in TARGET_STAGES:
+            return self._deny(request, "discovery-profile-stage-invalid")
+        # Target must be the declared locator host only (no port, no path).
+        try:
+            req_canonical = canonical_host(request.target)
+        except NetworkScopeError as exc:
+            return self._deny(request, f"discovery-target-invalid:{exc}")
+        try:
+            profile_canonical = canonical_host(profile.locator)
+        except NetworkScopeError as exc:
+            return self._deny(request, f"discovery-profile-invalid:{exc}")
+        if req_canonical != profile_canonical:
+            return self._deny(request, "discovery-target-mismatch")
+        if not host_in_scope(profile.scope, profile_canonical):
+            return self._deny(request, "discovery-scope-violation")
+        # Validate port spec if present; fail closed on malformed.
+        try:
+            ports, _ = _parse_port_spec(request.purpose or "")
+        except ValueError as exc:
+            return self._deny(request, f"discovery-port-spec-invalid:{exc}")
+        if len(ports) > MAX_DISCOVERY_PORTS:
+            return self._deny(request, "discovery-port-range-too-large")
+        if not _timeout_is_valid(request.timeout_seconds):
+            return self._deny(request, "discovery-timeout-invalid")
         return self._allow(request)
 
     def _consult_c1a(

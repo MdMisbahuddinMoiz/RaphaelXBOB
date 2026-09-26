@@ -189,9 +189,30 @@ def ssh_descriptor() -> CapabilityDescriptor:
     )
 
 
+def _discovery_descriptor() -> CapabilityDescriptor:
+    return CapabilityDescriptor(
+        capability_id="NETWORK_SERVICE_DISCOVERY",
+        protocol="tcp",
+        description=(
+            "Governed TCP service/port discovery (D13+). "
+            "stdlib socket.connect_ex only; no subprocess, no shell, no nmap."
+        ),
+        prerequisites=frozenset([
+            PrerequisiteSpec(kind="authorization", predicate="discovery",
+                             description="Discovery authorization in scope"),
+        ]),
+        authorization_scope="network_discovery",
+        evidence_schema="discovery_v1",
+        execution_adapter="raphael_ibm_bob.discovery_runtime",
+        verifier_binding=None,
+        falsifier_binding=None,
+        mission_types=_NETWORK_MISSIONS,
+    )
+
+
 def network_descriptors() -> list:
-    """The declared governed network capabilities (HTTP + Telnet)."""
-    return [_http_descriptor(), _telnet_descriptor()]
+    """The declared governed network capabilities (HTTP + Telnet + Discovery)."""
+    return [_http_descriptor(), _telnet_descriptor(), _discovery_descriptor()]
 
 
 def register_default(registry: Optional[CapabilityRegistry] = None

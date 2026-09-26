@@ -215,6 +215,40 @@ def start_network_run(session: RaphaelSession, mission: Optional[Mission] = None
         target_store=target_store, **kwargs)
 
 
+def start_discovery_run(
+    *,
+    host: str,
+    mission_id: str,
+    workspace_root: Path,
+    port_spec: str = "",
+    target_store: Any = None,
+    discovery_mediator: Any = None,
+    timeout_seconds: Optional[float] = None,
+) -> Any:
+    """Execute one governed service discovery invocation (D13+).
+
+    Delegates entirely to the harness discovery_run module, which routes
+    through Runtime → Broker → Policy → DiscoveryMediator. This function
+    is the ONLY harness-level entry point for service discovery from the UI.
+    It never calls the discovery mediator directly.
+    """
+    from raphael_ibm_bob.harness.discovery_run import (
+        DEFAULT_DISCOVERY_TIMEOUT,
+        run_discovery,
+    )
+    timeout = (float(timeout_seconds) if timeout_seconds is not None
+               else DEFAULT_DISCOVERY_TIMEOUT)
+    return run_discovery(
+        host=host,
+        mission_id=mission_id,
+        port_spec=port_spec,
+        workspace_root=Path(workspace_root),
+        target_store=target_store,
+        discovery_mediator=discovery_mediator,
+        timeout_seconds=timeout,
+    )
+
+
 def get_run(run_id: str, runs_root: Path = DEFAULT_RUNS_ROOT) -> RaphaelRun:
     """Load a Harness run record by id (FileNotFoundError if absent)."""
     return load_run(find_run_dir(Path(runs_root), run_id))
@@ -403,6 +437,7 @@ __all__ = [
     "list_skills",
     "make_model_adapter",
     "start_model_run",
+    "start_discovery_run",
     "start_network_run",
     "start_run",
     "submit_mission",
