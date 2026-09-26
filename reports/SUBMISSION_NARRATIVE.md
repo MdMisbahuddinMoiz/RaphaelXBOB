@@ -1,6 +1,6 @@
 # Raphael — AI-Assisted Governed Security Assessment
 
-Project: Raphael / `raphael-ibm-bob` 2.0.0. Commit `31298fb58`, branch
+Project: Raphael / `raphael-ibm-bob` 2.0.0. Commit `0cbcd263f`, branch
 `hackathon/bob-assisted-raphael`. Python 3.14.4. The shipped product
 `raphael_ibm_bob/` is stdlib-only (no third-party runtime dependencies).
 

@@ -5,7 +5,7 @@
 
 > The model can propose. Raphael decides whether execution is permitted.
 
-Commit `31298fb58` · branch `hackathon/bob-assisted-raphael` · Python 3.14.4
+Commit `0cbcd263f` · branch `hackathon/bob-assisted-raphael` · Python 3.14.4
 
 ---
 

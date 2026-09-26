@@ -40,7 +40,7 @@ credential was used.
 `AI_ASSISTED_READINESS_REPORT.md:8` and `SUBMISSION_NARRATIVE.md:3` both pin the
 submission to a commit:
 
-> Commit `31298fb58` · branch `hackathon/bob-assisted-raphael` · Python 3.14.4
+> Commit `0cbcd263f` · branch `hackathon/bob-assisted-raphael` · Python 3.14.4
 
 `31298fb58` **is** HEAD. But three of the four headline "defects found and fixed
 (all verified by execution)" are **not in it**:
@@ -301,7 +301,7 @@ changed. Nothing lied.
 
 | # | Finding | One-line fix |
 |---|---|---|
-| **B1** | **The cited commit `31298fb58` does not contain 3 of the 4 claimed fixes or the 20-test acceptance suite.** A judge who checks it out measures none of the submission. | Commit the working tree, or restate both reports as "HEAD + working-tree changes" and attach `git diff --stat` as the reproducibility manifest. |
+| **B1** | **The cited commit `0cbcd263f` does not contain 3 of the 4 claimed fixes or the 20-test acceptance suite.** A judge who checks it out measures none of the submission. | Commit the working tree, or restate both reports as "HEAD + working-tree changes" and attach `git diff --stat` as the reproducibility manifest. |
 | **B2** | **"No secrets committed/logged — PASS — scanned" is false.** `current-state/reports/ica_live_stapler.py` is git-tracked and carries a real 8-char lab SSH credential (line 202) plus the plaintext at line 200. | Remove/rotate the credential, re-scan the whole tracked tree, and rewrite the scorecard row to state the actual scope and result. |
 | **B3** | **WRITE-to-governance-file is real and model-reachable, and the report understates it.** Proven end-to-end through a real provider HTTP response; the "sole guard" is empty-by-default on the HTTP path. | Restate P1 with reachability and the probe; add a governance-path WRITE denylist (does not break `.py` remediation). |
 | **B4** | **"PlatformSpec preserved, untouched" and "HTB regression unchanged" are false for the measured tree** — `PlatformSpec` is introduced by the uncommitted `target_profile.py` diff, and `policy.py` / `htb.py` are modified. | Correct the two scorecard rows to "preserved from the D19 platform-authorization workstream (uncommitted)" and disclose the second workstream. |

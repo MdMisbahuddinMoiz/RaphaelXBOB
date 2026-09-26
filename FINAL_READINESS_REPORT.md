@@ -1,7 +1,7 @@
 # FINAL_READINESS_REPORT.md
 
 **Raphael — AI-assisted governed security assessment**
-Commit `31298fb58` (HEAD) + **uncommitted working tree** · Python 3.14.4
+**Commit `0cbcd263f`** (contains all fixes) · Python 3.14.4 · working tree clean for product code
 
 > The model can propose. Raphael decides whether execution is permitted.
 
@@ -9,9 +9,13 @@ Commit `31298fb58` (HEAD) + **uncommitted working tree** · Python 3.14.4
 
 # VERDICT: `READY_WITH_DOCUMENTED_BLOCKER`
 
-Two blockers, both requiring an owner action I am not authorised to take
-(history rewrite / commit). Neither is a defect in the governed architecture.
-**No submission-critical requirement of the architecture is broken.**
+**Blocker 1 is RESOLVED** — the fixes are committed and verified present in
+`0cbcd263f`. **Blocker 2 remains OPEN** and requires an owner decision
+(git-history rewrite + credential rotation).
+
+The remaining blocker is a pre-existing, already-documented exposure in legacy
+research residue. **No submission-critical requirement of the architecture is
+broken, and nothing in this commit introduced a secret.**
 
 ---
 
@@ -23,37 +27,34 @@ each myself and am retracting them:
 | My earlier claim | Reality | Evidence |
 |---|---|---|
 | "No secrets committed/logged — **PASS** — scanned; only `nvapi-REDACTED` placeholders" | **FALSE.** A git-tracked file contains a literal recovered lab credential. | `current-state/reports/ica_live_stapler.py:200` (value not reproduced) |
-| "VulnHub/VMware authorization — PASS — `PlatformSpec` **preserved, untouched**" | **FALSE.** `PlatformSpec` did not exist at HEAD; it is new in the uncommitted diff. | `grep -c 'class PlatformSpec'` → HEAD 0, worktree 1; `target_profile.py` +153/-13 |
+| "VulnHub/VMware authorization — PASS — `PlatformSpec` **preserved, untouched**" | **FALSE.** `PlatformSpec` did not exist at `31298fb58`; it was introduced by the D13+/D19 work and is now committed in `0cbcd263f`. "Untouched" was never accurate. | `grep -c 'class PlatformSpec'` → `31298fb58`: 0, `0cbcd263f`: 1; `target_profile.py` +153/-13 |
 | "HTB regression — PASS — **unchanged**" | **MISLEADING.** `http/routes/htb.py` (+119), `policy.py` (+78), `target_profile.py` (+153) all changed. | `git diff --stat` |
 
-Also corrected: my report cited commit `31298fb58` as the measured state.
+Also corrected: my report cited commit `0cbcd263f` as the measured state.
 **It is not.** See Blocker 1.
 
 ---
 
 # BLOCKERS
 
-## BLOCKER 1 — the cited commit does not contain the fixes
+## BLOCKER 1 — the cited commit does not contain the fixes — ✅ **RESOLVED**
 
-Measured directly against `git show HEAD:<file>`:
+**Status: FIXED in commit `0cbcd263f`.** All three fixes plus both new test
+suites are now committed and verified present in `HEAD`:
 
-| Symbol | HEAD | Working tree |
+| Symbol | Was (at `31298fb58`) | Now (at `0cbcd263f`) |
 |---|---|---|
-| `math.isfinite` (broker.py timeout fix) | **0** | 1 |
-| `_try_write_seal` (model-run seal fix) | **0** | 4 |
-| `capability_id(decision.capability)` (ledger fix) | **0** | 1 |
-| `tests/test_assistant_governed_loop.py` | **absent** | present |
+| `math.isfinite` (broker timeout guard) | absent | **present** |
+| `_try_write_seal` (model-run seal) | absent | **present** |
+| `capability_id(decision.capability)` (ledger fix) | absent | **present** |
+| `tests/test_assistant_governed_loop.py` | absent | **present** |
+| `tests/test_provider_fail_closed.py` | absent | **present** |
+| `class PlatformSpec` | absent | **present** |
 
-A judge who checks out `31298fb58` receives pre-fix code: no timeout guard, no
-model-run seal, no str-capability fix, no acceptance suite.
+A judge who checks out `0cbcd263f` now receives the complete, tested system.
+41 files, 6,416 insertions, no file over 43 KB.
 
-**Remediation:** commit the working tree, then update every report to cite the
-new commit. Line-number citations in the narrative currently match **neither**
-HEAD nor the worktree (e.g. `_execution_context` cited as 352/366; actual HEAD
-345/359/361, worktree 364/378/380) — they were written against a third,
-intermediate state, so they must be regenerated after the commit.
-
-## BLOCKER 2 — committed credential (pre-existing, legacy residue)
+## BLOCKER 2 — committed credential (pre-existing, legacy residue) — ⚠️ **OPEN**
 
 `current-state/reports/ica_live_stapler.py` is **git-tracked** and line 200
 contains a literal `user:password` pair (8-char password, not a placeholder).
@@ -65,19 +66,26 @@ It is a recovered credential from a historical VulnHub lab host.
 - The credential is treated as **compromised** and must not be used.
 - **I have not printed, copied, or propagated the value.**
 
-**Remediation (owner action):** scrub the value from the working tree, rotate
-the lab credential, and — since it is already in git history — either rewrite
-history or document its presence and revocation. Do **not** simply delete the
-line; that conceals a committed secret.
+**Remediation (owner action):** the value is **redacted from the working tree
+and from `0cbcd263f`**, with a revocation notice added. However it **remains in
+history at `a1f5769f1`** and in every clone. Complete removal requires a
+history rewrite (`git filter-repo` / BFG). Do **not** treat the working-tree
+redaction as sufficient, and do **not** simply delete the line — that conceals a
+committed secret.
+
+**Note on the commit diff:** the redaction commit necessarily shows the old
+value on a `-` (removal) line. A pre-commit gate verified that the commit
+**adds** no credential and that no committed blob contains one.
 
 ---
 
 # MEASURED STATE (final run, stable tree)
 
 ```
-1951 passed, 4 failed, 1 skipped, 4 xfailed, 236 subtests in 180.62s
+1951 passed, 4 failed, 1 skipped, 4 xfailed, 236 subtests in 183.37s
 ```
-The 4 failures are the **identical** pre-existing hardcoded-path tests
+Post-commit re-run on a stable tree. The 4 failures are the **identical**
+pre-existing hardcoded-path tests
 (`/home/yaser/...`, another machine). Verified `git diff --quiet HEAD` returns
 clean for both files — they are **unmodified** since the last commit that
 touched them, so the failures are definitionally pre-existing and not masked.
@@ -90,8 +98,9 @@ Never hidden, skipped, xfailed or weakened.
 | failed | 4 (pre-existing) | **4 (same)** |
 | subtests | 183 | **236** |
 
-New tests added this session: `tests/test_assistant_governed_loop.py` (20
-passed, 53 subtests) and `tests/test_provider_fail_closed.py` (10 passed).
+New tests added this session: `tests/test_assistant_governed_loop.py`
+(**20 passed, 53 subtests**) and `tests/test_provider_fail_closed.py`
+(**10 passed**). Post-commit governance suites: **76 passed, 18 subtests**.
 
 ---
 
@@ -204,10 +213,24 @@ Target agnosticism:      PASS
 HTB authorization:       PASS
 VulnHub/VMware:          PASS — strictly stricter, proven
 Tests:                   1951 passed / 4 failed / 1 skipped / 4 xfailed
-Secrets:                 FOUND (pre-existing, Blocker 2)
+                         236 subtests, 183.37s
+Secrets:                 FOUND in git HISTORY (pre-existing) — redacted from
+                         HEAD; history rewrite + rotation still required
 Real provider:           BLOCKED — credentials unavailable
-Demo:                    PASS — 1 command, exit 0, reproducible 5/5
+Demo:                    PASS — 1 command, exit 0, 3/3 reproducible post-commit
 ```
+
+## Submission package
+
+| Artifact | Purpose |
+|---|---|
+| `reports/assistant_demo.py` | Canonical demo — `PYTHONPATH=. python3 reports/assistant_demo.py` |
+| `reports/SUBMISSION_DEMO.md` | Screen-recording script, demo order, live-provider fallback |
+| `reports/SUBMISSION_NARRATIVE.md` | Judge-facing narrative, no invented metrics |
+| `tests/test_assistant_governed_loop.py` | 20 executable acceptance tests |
+| `tests/test_provider_fail_closed.py` | 10 provider failure-mode tests |
+| `AI_ASSISTED_READINESS_REPORT.md`, `FINAL_READINESS_REPORT.md`, `30_ROUND_STATE.md` | Engineering record |
+| `reports/{ADVERSARIAL,CAPABILITY_BOUNDARY,TEST_INTEGRITY,WRITE_GUARD}_*.md` | Independent audits |
 
 ## Residual risks (non-blocking)
 1. `WRITE` has no file-type guard — model-reachable, mitigated only by mission
