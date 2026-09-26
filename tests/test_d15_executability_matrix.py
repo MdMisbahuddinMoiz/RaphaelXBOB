@@ -1,8 +1,9 @@
 """Deterministic D15 descriptor-versus-executable proof matrix.
 
 All target states and provider outcomes are synthetic.  HTTP and Telnet use
-injected offline mediators, while SSH/SMB/TLS/DNS/banner remain declarations
-with no enum binding or governed adapter.
+injected offline mediators; SMB/TLS/DNS/banner remain declarations
+with no enum binding or governed adapter. SSH is now executable via
+`raphael_ibm_bob.ssh_runtime` (one governed command per session).
 """
 from __future__ import annotations
 
@@ -49,14 +50,19 @@ MISSION: Final = Mission(
             "commands": ["pwd"],
             "flag_command": "pwd",
             "flag_pattern": "^/synthetic$",
-        }
+        },
+        "ssh": {
+            "username": "synthetic-user",
+            "credential_id": "",
+            "authorized_commands": ["ls"],
+        },
     },
 )
 
 CAPABILITY_MATRIX: Final = (
     ("HTTP", "NETWORK_HTTP_REQUEST", "http", True, True, True),
     ("Telnet", "NETWORK_TELNET_SESSION", "telnet", True, True, True),
-    ("SSH", "NETWORK_SSH_SESSION", "ssh", True, False, False),
+    ("SSH", "NETWORK_SSH_SESSION", "ssh", True, True, True),
     ("SMB", "NETWORK_SMB_METADATA", "smb", True, False, False),
     ("TLS", "NETWORK_TLS_METADATA", "tls", True, False, False),
     ("DNS", "NETWORK_DNS_METADATA", "dns", True, False, False),

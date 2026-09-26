@@ -30,6 +30,7 @@ from raphael_ibm_bob.contracts import (
     Finding,
     FindingState,
     Mission,
+    capability_id,
 )
 from raphael_ibm_bob.evidence_ledger import (
     EvidenceLedger,
@@ -58,6 +59,212 @@ from raphael_ibm_bob.specialization import (
 )
 from raphael_ibm_bob.verifier import RetestSpec, Verifier
 from raphael_ibm_bob.workspace import Workspace
+
+
+#: How many folded observations are handed to the model per turn. The
+#: ledger is append-only and grows; the model context must stay bounded.
+MAX_OBSERVATIONS = 8
+
+#: How many discovered ports are named per observation. Enough to plan
+#: a follow-up, small enough to keep the prompt bounded.
+MAX_OBSERVED_PORTS = 32
+
+
+def authorized_session_view(mission: Mission) -> Optional[dict]:
+    """What the model must know to make a LEGAL session proposal.
+
+    Without this the model can only guess a command, and a guessed
+    command is denied by Policy exactly as an illegal one would be —
+    which looks like a governance failure but is really a missing
+    declaration. This carries the operator's authorized scope only; it
+    grants nothing and is still checked at Broker -> Policy time.
+    """
+    raw = (mission.problem or {}).get("ssh")
+    if not isinstance(raw, dict):
+        return None
+    commands = [str(c) for c in (raw.get("authorized_commands")
+                                 or raw.get("commands") or ())]
+    if not commands:
+        return None
+    return {
+        "protocol": str(raw.get("protocol", "ssh")),
+        "target": str(raw.get("target", "")),
+        "username": str(raw.get("username", "")),
+        "authorized_commands": commands,
+        "one_command_per_request": True,
+        "how_to_propose": (
+            "Write the rationale first, then END the purpose with the "
+            "literal clause cmd= (c-m-d-EQUALS) followed by the whole "
+            "command in double quotes, e.g. Read the remote note "
+            "cmd=\"cat note.txt\". The equals sign is REQUIRED; without "
+            "it the request is denied as carrying no command. The "
+            "clause MUST be last -- a shell operator after it is "
+            "denied as chaining. Use ONLY a command from "
+            "authorized_commands. Its output is returned to you "
+            "verbatim on the next turn, so read it before proposing "
+            "the same command again."),
+    }
+
+#: Ledger record kinds that carry a discovery result. Discovery writes
+#: `producer="discovery"`; the result record carries the port table.
+DISCOVERY_PRODUCERS = ("discovery",)
+
+
+def _port_table(discovery_result: dict) -> list:
+    """Open ports + service names from one discovery result payload."""
+    rows = []
+    for entry in (discovery_result.get("port_results") or []):
+        if entry.get("state") != "open":
+            continue
+        rows.append({
+            "port": entry.get("port"),
+            "service": entry.get("service"),
+            "latency_ms": entry.get("latency_ms"),
+        })
+    return rows[:MAX_OBSERVED_PORTS]
+
+
+def fold_observations(ledger: EvidenceLedger) -> Tuple[dict, ...]:
+    """Fold ledger evidence into bounded, model-facing observations.
+
+    Read-only and derived: nothing here grants authority, and nothing
+    is invented. A NETWORK_SERVICE_DISCOVERY invocation contributes one
+    observation naming the host, the ports it probed, and the ports that
+    actually answered — that is what lets the model choose a NEXT
+    governed action from real evidence instead of repeating the last
+    one. Provider output stays labelled `provider_untrusted`.
+
+    Bounded to the most recent `MAX_OBSERVATIONS`; ledger order is
+    append-only, so the tail is the newest evidence.
+    """
+    observations: List[dict] = []
+    for record in ledger.all_records():
+        if record.get("producer") not in DISCOVERY_PRODUCERS:
+            continue
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        result = payload.get("discovery_result") or {}
+        observations.append({
+            "kind": "service-discovery",
+            "capability": payload.get("capability")
+            or Capability.NETWORK_SERVICE_DISCOVERY.value,
+            "host": payload.get("host") or result.get("host"),
+            "ports_probed": payload.get("ports_probed"),
+            "ports_open": list(payload.get("ports_open") or []),
+            "open_services": _port_table(result),
+            "state": result.get("state"),
+            # A sweep is a SAMPLE, not proof of absence. The model must
+            # see this explicitly or it will read "no open ports" as
+            # "nothing is listening" and stop, when in fact only a
+            # bounded window of the port space was probed.
+            "capped": bool(payload.get("capped")),
+            "exhaustive": False,
+            "probed_ports": list(payload.get("probed_ports") or ()),
+            "unprobed_hint": (
+                "Only the ports listed in probed_ports were checked. "
+                "A closed port there means closed AT THAT PORT ONLY; "
+                "services may still exist on ports outside this sweep. "
+                "Request a different ports= range to widen coverage."
+                if payload.get("ports_probed") else ""),
+            "provider_untrusted": True,
+            "evidence_id": record.get("evidence_id"),
+        })
+    return tuple(observations[-MAX_OBSERVATIONS:])
+
+
+@dataclass(frozen=True)
+class AgentTurn:
+    """One governed turn, as the operator sees it.
+
+    Records the full OBSERVE -> PROPOSE -> POLICY -> EXECUTE -> EVIDENCE
+    chain for a single step. `rationale` is the model's own one-line
+    `purpose` (the structured contract forbids free-form reasoning, so
+    no chain-of-thought is stored or displayed); `next_action` states
+    what the loop will do next. Presentation-only: the authoritative
+    record is the evidence ledger this turn also wrote.
+    """
+    index: int
+    observation: dict
+    proposal: dict
+    rationale: str
+    policy: dict
+    execution: dict
+    evidence: dict
+    next_action: str
+
+    def to_dict(self) -> dict:
+        return {
+            "index": self.index,
+            "observation": self.observation,
+            "proposal": self.proposal,
+            "rationale": self.rationale,
+            "policy": self.policy,
+            "execution": self.execution,
+            "evidence": self.evidence,
+            "next_action": self.next_action,
+        }
+
+
+def write_timeline(run_dir: Path, turns: List[AgentTurn], terminal: str,
+                   terminal_reason: str, gate_verdict: Optional[str]
+                   ) -> Path:
+    """Persist the operator-facing governed loop projection.
+
+    Written after the ledger closes so every turn's evidence references
+    are final. Never raises: the ledger is the authoritative record and
+    this file is a read-only convenience projection over it.
+    """
+    path = run_dir / "timeline.json"
+    payload = {
+        "turns": [t.to_dict() for t in turns],
+        "terminal": terminal,
+        "terminal_reason": terminal_reason,
+        "gate_verdict": gate_verdict,
+    }
+    try:
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                        encoding="utf-8")
+    except OSError as exc:  # pragma: no cover - filesystem fault
+        _log.warning("timeline write failed: %s", type(exc).__name__)
+    return path
+
+
+def _observation_view(observations: Tuple[dict, ...]) -> dict:
+    """Compact OBSERVE snapshot for one turn (bounded, no credentials)."""
+    latest = observations[-1] if observations else None
+    return {
+        "observation_count": len(observations),
+        "services_known": sorted({
+            entry["port"]
+            for obs in observations
+            for entry in (obs.get("open_services") or [])
+            if entry.get("port") is not None
+        }),
+        "latest": latest,
+    }
+
+
+def _evidence_view(result, output: str) -> dict:
+    """Compact EVIDENCE snapshot for one turn, from the governed result.
+
+    `evidence_ids` are the ledger's own append-only record ids, so the
+    operator view points at the authoritative chain rather than a
+    parallel copy. Discovery payloads stay flagged `provider_untrusted`
+    — a scan result is evidence, never a verified finding.
+    """
+    execution = result.execution
+    return {
+        "evidence_ids": list(result.evidence_ids),
+        "request_seq": result.request_seq,
+        "decision_seq": result.decision_seq,
+        "result_seq": result.result_seq,
+        "provider_untrusted": bool(
+            (execution.evidence or {}).get("provider_untrusted"))
+        if execution else False,
+        "excerpt": (output or "")[:400],
+    }
+
 
 ProbeCallable = Callable[[], bool]
 
@@ -261,6 +468,10 @@ class ModelRunResult:
     gate_verdict: Optional[str]
     task_plan: Optional[dict] = None
     terminal_reason: str = ""
+    #: Absolute path of the persisted governed-loop projection, or "" if
+    #: the run failed before the ledger closed. Read-only convenience
+    #: projection; the evidence ledger remains authoritative.
+    timeline: str = ""
 
 
 def run_model_mission(session: RaphaelSession, mission: Mission,
@@ -269,8 +480,26 @@ def run_model_mission(session: RaphaelSession, mission: Mission,
                       sessions_root: Optional[Path] = None,
                       max_turns: int = DEFAULT_MAX_TURNS,
                       probe: Optional[ProbeCallable] = None,
-                      history_window: int = 5) -> ModelRunResult:
+                      history_window: int = 5,
+                      target_store: object = None) -> ModelRunResult:
     """Drive one governed, model-led mission to a terminal state.
+
+    The loop is strictly:
+
+        OBSERVE  fold_observations(ledger) -> ModelContext
+        MODEL    model.propose(context) -> ActionRequest   (proposal only)
+        PROPOSE  record the request, its capability, and the rationale
+        POLICY   runtime.submit -> Broker -> Policy         (the ONLY path)
+        EXECUTE  broker-mediated capability invocation
+        EVIDENCE append-only ledger records become next turn's input
+
+    The model never holds a capability, mediator, socket, or subprocess
+    handle: it returns an `ActionRequest` and nothing else. Execution
+    authority belongs to Runtime -> Broker -> Policy exclusively.
+
+    `target_store` is injected so a network mission's declared
+    `TargetProfile` is consulted explicitly rather than via the
+    process-wide fallback. Policy still re-derives permission from it.
 
     The `RaphaelRun.state` becomes `completed`/`refused` per the
     QualityGate verdict, or `failed` when the loop itself raises. A
@@ -296,12 +525,14 @@ def run_model_mission(session: RaphaelSession, mission: Mission,
     terminal = "max-turns"
     terminal_reason = ""
     turn_log: List[dict] = []
+    agent_turns: List[AgentTurn] = []
     current_finding_id: Optional[str] = None
     plan = None
 
     try:
-        policy = BOBPolicy(workspace)
-        broker = BOBBroker(policy, workspace, ledger=ledger)
+        policy = BOBPolicy(workspace, target_store=target_store)
+        broker = BOBBroker(policy, workspace, ledger=ledger,
+                           target_store=target_store)
         runtime = BOBRuntime(broker)
         store = FindingStore(ledger)
         verifier = Verifier(runtime, ledger, store)
@@ -312,6 +543,7 @@ def run_model_mission(session: RaphaelSession, mission: Mission,
         roles_ctx = _roles_context()
 
         for index in range(max_turns):
+            observed = fold_observations(ledger)
             context = ModelContext(
                 mission=mission,
                 findings=list(store.all()),
@@ -322,12 +554,25 @@ def run_model_mission(session: RaphaelSession, mission: Mission,
                 session_id=session.session_id,
                 available_roles=roles_ctx,
                 active_task=_task_context(plan),
+                observations=observed,
+                authorized_session=authorized_session_view(mission),
             )
             try:
                 request = model.propose(context)
             except DoneSignal:
                 terminal = "done"
                 terminal_reason = "model declared done"
+                agent_turns.append(AgentTurn(
+                    index=index,
+                    observation=_observation_view(observed),
+                    proposal={"intent": "done"},
+                    rationale="model declared the mission complete",
+                    policy={"decision": "n/a",
+                            "reason": "terminal signal, no action proposed"},
+                    execution={"executed": False},
+                    evidence={"evidence_count": len(ledger.all_records())},
+                    next_action="stop: hand control to the QualityGate",
+                ))
                 break
             except (StructuredProposalError, ProviderError, KeyError) as exc:
                 terminal = "model-error"
@@ -343,7 +588,7 @@ def run_model_mission(session: RaphaelSession, mission: Mission,
 
             decision = result.broker_result.decision
             turn = {
-                "capability": request.capability.value,
+                "capability": capability_id(request.capability),
                 "target": request.target,
                 "decision": decision.decision.value,
                 "executed": result.broker_result.capability_invoked,
@@ -355,6 +600,31 @@ def run_model_mission(session: RaphaelSession, mission: Mission,
             if result.execution is not None:
                 turn["output"] = (
                     excerpt_output(request, result.execution) or "")[:800]
+            agent_turns.append(AgentTurn(
+                index=index,
+                observation=_observation_view(observed),
+                proposal={
+                    "capability": capability_id(request.capability),
+                    "target": request.target,
+                    "requester": request.requester,
+                },
+                rationale=(request.purpose or "")[:300],
+                policy={
+                    "decision": decision.decision.value,
+                    "reason": decision.reason,
+                },
+                execution={
+                    "executed": result.broker_result.capability_invoked,
+                    "success": (result.execution.success
+                                if result.execution else None),
+                    "error": (result.execution.error
+                              if result.execution else None),
+                },
+                evidence=_evidence_view(result, turn["output"]),
+                next_action=(
+                    "re-observe the ledger and propose the next governed "
+                    "action"),
+            ))
 
             if (request.capability is Capability.WRITE
                     and decision.decision.value == "allow"):
@@ -432,12 +702,16 @@ def run_model_mission(session: RaphaelSession, mission: Mission,
         save_run(run)
         ledger.close()
         _try_write_seal(run_dir)
+        write_timeline(run_dir, agent_turns, terminal, terminal_reason,
+                       run.gate_verdict)
         if sessions_root is not None:
             save_session(session, sessions_root)
         raise
     save_run(run)
     ledger.close()
     _try_write_seal(run_dir)
+    timeline = str(write_timeline(run_dir, agent_turns, terminal,
+                                  terminal_reason, run.gate_verdict))
     if sessions_root is not None:
         save_session(session, sessions_root)
     task_plan = plan.to_dict() if plan is not None else None
@@ -449,13 +723,19 @@ def run_model_mission(session: RaphaelSession, mission: Mission,
                           turns=len(turn_log),
                           gate_verdict=run.gate_verdict,
                           task_plan=task_plan,
-                          terminal_reason=terminal_reason)
+                          terminal_reason=terminal_reason,
+                          timeline=timeline)
 
 
 __all__ = [
     "DEFAULT_MAX_TURNS",
+    "MAX_OBSERVATIONS",
+    "AgentTurn",
     "ModelRunResult",
     "ProbeCallable",
+    "authorized_session_view",
+    "fold_observations",
     "passing_run_tests",
     "run_model_mission",
+    "write_timeline",
 ]

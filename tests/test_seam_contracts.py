@@ -66,11 +66,13 @@ class CapabilityEnumTests(unittest.TestCase):
     def test_capability_allow_list_is_exactly_the_brief(self):
         # The MVP brief's five capabilities plus the first-class C1A
         # out-of-process capability (Phase 2C), the governed network
-        # capabilities (D9 HTTP; D12 Telnet), and the governed service
-        # discovery capability (D13+). None is an alias.
+        # capabilities (D9 HTTP; D12 Telnet), governed service discovery
+        # (D13+), and the governed SSH session capability. None is an
+        # alias: SSH is a distinct, broker-mediated session boundary.
         expected = {"read", "list", "search", "write", "run_test",
                     "c1a_static_file_inspect", "network_http_request",
-                    "network_telnet_session", "network_service_discovery"}
+                    "network_telnet_session", "network_service_discovery",
+                    "network_ssh_session"}
         actual = {c.value for c in Capability}
         self.assertEqual(actual, expected)
 

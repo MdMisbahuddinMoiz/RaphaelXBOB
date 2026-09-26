@@ -35,9 +35,10 @@ from raphael_ibm_bob.network_scope import (
     host_in_scope,
 )
 
-#: D12 adds "telnet" for the governed Telnet session capability. Existing
-#: HTTP target checks are unchanged; authorization stays exact per protocol.
-ALLOWED_PROTOCOLS = ("http", "https", "telnet")
+#: D12 adds "telnet"; the governed SSH session capability adds "ssh".
+#: Existing HTTP target checks are unchanged; authorization stays exact
+#: per protocol.
+ALLOWED_PROTOCOLS = ("http", "https", "telnet", "ssh")
 
 #: Environments that satisfy the isolation requirement for non-HTB platforms.
 #: A deliberately vulnerable lab VM must never be authorized somewhere that
@@ -325,6 +326,7 @@ class TargetStore:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._profile: Optional[TargetProfile] = None
+        self._ssh_sessions: Dict[str, Dict[str, Any]] = {}
 
     def set_target(self, profile: TargetProfile) -> TargetProfile:
         if not isinstance(profile, TargetProfile):
@@ -345,6 +347,32 @@ class TargetStore:
     def current(self) -> Optional[TargetProfile]:
         with self._lock:
             return self._profile
+
+    # -- governed SSH session declaration --------------------------------
+    #
+    # Process-local and mission-bound, exactly like the target profile.
+    # It holds the session SHAPE the operator authorized — target,
+    # protocol, credential REFERENCE, allow-listed commands, bounds.
+    # It never holds a password: the credential is a vault id resolved
+    # inside `ssh_runtime` at execution time.
+
+    def set_ssh_session(self, mission_id: str, session: dict) -> dict:
+        if not isinstance(session, dict):
+            raise TargetProfileError("ssh session must be a mapping")
+        with self._lock:
+            self._ssh_sessions[mission_id] = dict(session)
+            return dict(session)
+
+    def get_ssh_session(self, mission_id: object) -> Optional[dict]:
+        with self._lock:
+            session = self._ssh_sessions.get(mission_id)
+            return dict(session) if session is not None else None
+
+    def latest_ssh_session(self) -> Optional[dict]:
+        with self._lock:
+            for session in reversed(list(self._ssh_sessions.values())):
+                return dict(session)
+            return None
 
     def clear_target(self) -> None:
         with self._lock:

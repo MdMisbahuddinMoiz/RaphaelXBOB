@@ -51,6 +51,7 @@ from raphael_ibm_bob.network_scope import (
     canonical_host,
     host_in_scope,
     parse_http_target,
+    parse_ssh_target,
     parse_telnet_target,
 )
 from raphael_ibm_bob.discovery_runtime import MAX_DISCOVERY_PORTS, _parse_port_spec
@@ -87,9 +88,14 @@ def _timeout_is_valid(value: object) -> bool:
 class BOBPolicy:
     """MVP Policy. Fail-closed. Pure (no side effects)."""
 
-    def __init__(self, workspace: Workspace, target_store=None):
+    def __init__(self, workspace: Workspace, target_store=None,
+                 credential_vault=None):
         self._workspace = workspace
         self._target_store = target_store
+        # Optional process-local credential vault. Policy consults it to
+        # confirm a referenced credential is authorized for this exact
+        # host and protocol; it never reads or logs plaintext.
+        self._credential_vault = credential_vault
         self._metadata: dict[str, PolicyCapabilityMetadata] = {}
         self._register_builtin_metadata()
 
@@ -120,6 +126,8 @@ class BOBPolicy:
                 scope="network", authorizer=self._consult_telnet),
             Capability.NETWORK_SERVICE_DISCOVERY.value: PolicyCapabilityMetadata(
                 scope="network", authorizer=self._consult_discovery),
+            Capability.NETWORK_SSH_SESSION.value: PolicyCapabilityMetadata(
+                scope="network", authorizer=self._consult_ssh),
         }
 
     def consult(self, request: ActionRequest, mission: Mission) -> PolicyDecision:
@@ -284,6 +292,88 @@ class BOBPolicy:
             return self._deny(request, "discovery-port-range-too-large")
         if not _timeout_is_valid(request.timeout_seconds):
             return self._deny(request, "discovery-timeout-invalid")
+        return self._allow(request)
+
+    def _consult_ssh(
+        self, request: ActionRequest, mission: Mission,
+        _resolved: Path | None = None,
+    ) -> PolicyDecision:
+        """Governed SSH session authorization (fail closed).
+
+        Every failure mode is a DENY, evaluated before any transport is
+        touched:
+
+        * the target must be an ``ssh://host:port`` literal with no
+          userinfo, no path, and no query (no secondary destination and
+          no credential smuggled through the URL);
+        * a mission-bound TargetProfile must exist and carry an
+          authorization reference;
+        * host, port, and protocol must match the profile EXACTLY —
+          ``profile.allows`` is an equality check, never a wildcard or
+          a CIDR expansion;
+        * the mission must declare an SSH session spec, and the spec's
+          port and host must agree with the request;
+        * the request must carry exactly ONE structured ``cmd=``
+          command, and that command must independently pass the
+          command-policy layer (ALLOW). ``DENY`` means it can never
+          run; ``REQUIRE_AUTHORIZATION`` means the operator has not
+          authorized it for this mission;
+        * the request timeout must be valid.
+        """
+        from raphael_ibm_bob.ssh_runtime import (
+            CommandDecision,
+            build_ssh_spec,
+            chaining_detected,
+            command_from_purpose,
+        )
+        try:
+            target = parse_ssh_target(request.target)
+        except NetworkScopeError as exc:
+            return self._deny(request, f"ssh-target-invalid:{exc}")
+        store = self._target_store or get_target_store()
+        profile = store.get_target(mission.mission_id)
+        if profile is None:
+            return self._deny(request, "ssh-no-authorized-target")
+        if not profile.authorization_ref:
+            return self._deny(request, "ssh-authorization-missing")
+        if not profile.allows(host=target.host, port=target.port,
+                              protocol="ssh"):
+            return self._deny(request, "ssh-target-mismatch")
+        if not _timeout_is_valid(request.timeout_seconds):
+            return self._deny(request, "ssh-timeout-invalid")
+        spec = build_ssh_spec(mission, profile)
+        if spec is None:
+            return self._deny(request, "ssh-no-session-spec")
+        if spec.port != target.port or (spec.target
+                                         and spec.target != target.host):
+            return self._deny(request, "ssh-spec-target-mismatch")
+        command = command_from_purpose(request.purpose)
+        if not command:
+            return self._deny(request, "ssh-no-command")
+        verdict, why = spec.policy.evaluate(
+            command, extra_authorized=spec.authorized_commands)
+        if verdict is not CommandDecision.ALLOW:
+            return self._deny(request, f"ssh-command-rejected:{why}")
+        if spec.max_commands != 1:
+            return self._deny(request, "ssh-multiple-commands-forbidden")
+        chain = chaining_detected(request.purpose)
+        if chain is not None:
+            return self._deny(
+                request, f"ssh-command-chaining-rejected:{chain!r}")
+        # The credential REFERENCE must resolve and be authorized for
+        # this exact host and protocol BEFORE the action is executable.
+        # Without this the check would live only in the mediator, and
+        # Policy would approve a session it already knows cannot run.
+        if spec.credential_id:
+            if self._credential_vault is None:
+                return self._deny(request, "ssh-no-credential-authority")
+            if not self._credential_vault.is_authorized_for(
+                    spec.credential_id, target.host, "ssh"):
+                return self._deny(request, "ssh-credential-not-authorized")
+            if self._credential_vault.retrieve(
+                    spec.credential_id) is None:
+                return self._deny(
+                    request, "ssh-credential-reference-invalid")
         return self._allow(request)
 
     def _consult_c1a(

@@ -368,6 +368,7 @@ def error_response(exc: ApiError) -> Response:
 
 def build_router() -> Router:
     from raphael_ibm_bob.http.routes import (
+        agent,
         capabilities,
         command,
         discovery,
@@ -467,6 +468,14 @@ def build_router() -> Router:
     # D13+ — governed service discovery (literal route; must precede any
     # /htb/{param} pattern to avoid route-match ambiguity).
     router.add("POST", "/htb/discover", htb.discover_services)
+
+    # AI agent vertical slice — provider config, authorized target, and
+    # the read-only governed-loop projection.
+    router.add("GET", "/agent", agent.console)
+    router.add("POST", "/agent/start", agent.start)
+    router.add("POST", "/agent/target", agent.set_target)
+    router.add("GET", "/runs/{run_id}/timeline", agent.timeline)
+    router.add("POST", "/agent/ssh-session", agent.set_ssh_session)
     return router
 
 
@@ -620,5 +629,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     return serve(config)
 
 
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    # Running this file with `python -m raphael_ibm_bob.http.app` executes
+    # it a SECOND time under the module name `__main__`, so the classes
+    # defined above exist twice: once in `__main__` and once in the real
+    # `raphael_ibm_bob.http.app` that the route modules import. The router
+    # then fails its `isinstance(response, Response)` check against the
+    # route's own Response, wraps that HTML response in a JSON one, and
+    # every page dies with "Object of type Response is not JSON
+    # serializable". Serve from the package module instead, so exactly
+    # one copy of these classes is ever live.
+    from raphael_ibm_bob.http import app as _package_module
+    sys.exit(_package_module.main())

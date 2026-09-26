@@ -378,7 +378,14 @@ class CapabilityRegistry:
 
 
 def default_registry() -> CapabilityRegistry:
-    """Registry preloaded with the five authoritative BOB capabilities."""
+    """Registry preloaded with the authoritative BOB capabilities.
+
+    Includes the governed network capabilities (HTTP, Telnet, service
+    discovery) so the model planner can PROPOSE them. Declaring a
+    capability grants no authority: every proposal still crosses
+    Runtime -> Broker -> Policy, and Policy re-derives permission from
+    the mission-bound TargetProfile.
+    """
     registry = CapabilityRegistry()
     registry.register_capability(CapabilityDefinition(
         capability=Capability.READ,
@@ -449,7 +456,56 @@ def default_registry() -> CapabilityRegistry:
         timeout_seconds=20.0,
         evidence_produced=("network-observation",),
     ))
+    registry.register_capability(CapabilityDefinition(
+        capability=Capability.NETWORK_SERVICE_DISCOVERY,
+        description=("One governed bounded TCP service/port discovery pass "
+                     "over the declared authorized target (D13+). Put the "
+                     "port selection in the purpose as a ports= clause, "
+                     "e.g. ports=8080 or ports=1-1024."),
+        target_schema=("host or IP of the declared TargetProfile locator "
+                       "(no port, no scheme, no path)"),
+        purpose_template="service-discovery:{target}",
+        verification_expectation=("an independent governed discovery pass "
+                                  "reports the same open ports"),
+        version="1.0",
+        timeout_seconds=30.0,
+        evidence_produced=("network-observation",),
+    ))
+    registry.register_capability(CapabilityDefinition(
+        capability=Capability.NETWORK_SSH_SESSION,
+        # No quote or angle-bracket characters: capability descriptions
+        # are rendered verbatim in HTML-escaped operator views, and a
+        # literal quote would make the rendered text differ from the
+        # declaration.
+        description=("One governed SSH session that runs exactly ONE "
+                     "already-approved command and returns a bounded "
+                     "structured result. SYNTAX: write the rationale "
+                     "first, then END the purpose with the literal "
+                     "clause cmd= (c-m-d-EQUALS) immediately followed "
+                     "by the entire command wrapped in double quotes, so "
+                     "any argument is included. GOOD: purpose reads "
+                     "Probe the remote note, then cmd= followed by "
+                     "cat note.txt in double quotes. BAD: writing the "
+                     "word cmd with a space instead of an equals sign "
+                     "is denied as carrying no command, and so is any "
+                     "purpose with no clause at all. The clause MUST "
+                     "be last: a shell operator after it is rejected "
+                     "as chaining. One command per request. No shell "
+                     "chaining, no redirection, no interpreter "
+                     "indirection, and only commands the mission "
+                     "authorized. The command output is returned to "
+                     "you verbatim on the next turn, so read it before "
+                     "proposing the same command again."),
+        target_schema="ssh://host:port (no path, no userinfo, no query)",
+        purpose_template="ssh-session:{target}",
+        verification_expectation=("an independent governed session "
+                                  "produces the same bounded output"),
+        version="1.0",
+        timeout_seconds=20.0,
+        evidence_produced=("network-observation",),
+    ))
     return registry
+
 
 
 _DEFAULT_SKILLS = (
@@ -466,8 +522,14 @@ _DEFAULT_SKILLS = (
     ("network-http-request", "Governed HTTP request",
      Capability.NETWORK_HTTP_REQUEST, None,
      ("network-observation",), ()),
+    ("network-service-discovery", "Governed TCP service discovery",
+     Capability.NETWORK_SERVICE_DISCOVERY, None,
+     ("network-observation",), ()),
     ("network-telnet-session", "Governed Telnet session",
      Capability.NETWORK_TELNET_SESSION, None,
+     ("network-observation",), ()),
+    ("network-ssh-session", "Governed SSH session (one cmd= per call)",
+     Capability.NETWORK_SSH_SESSION, None,
      ("network-observation",), ()),
 )
 

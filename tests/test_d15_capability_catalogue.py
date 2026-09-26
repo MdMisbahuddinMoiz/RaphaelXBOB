@@ -7,6 +7,7 @@ from raphael_ibm_bob.capability_bootstrap import (
     d15_descriptors,
     register_d15_descriptors,
 )
+from raphael_ibm_bob.contracts import Capability
 from raphael_ibm_bob.capability_registry import (
     AdapterNotBoundError,
     CapabilityRegistry,
@@ -68,9 +69,17 @@ class D15CatalogueTests(unittest.TestCase):
             self.assertEqual({descriptor.capability_id for descriptor in found}, {capability_id})
 
     def test_planning_fails_closed_without_enum_binding(self) -> None:
+        """A declared capability with no enum binding still fails closed.
+
+        SSH is excluded because it now HAS an enum binding and is
+        executable through Broker/Policy; every other declared
+        descriptor must still refuse to plan.
+        """
         registry = register_d15_descriptors(CapabilityRegistry())
 
         for descriptor in d15_descriptors():
+            if descriptor.capability_id in getattr(Capability, "__members__", {}):
+                continue
             plan = ExecutionPlan("plan", "mission", "target")
             plan.add_step(descriptor.capability_id, {"target": "host"})
             with self.assertRaises(ValueError):

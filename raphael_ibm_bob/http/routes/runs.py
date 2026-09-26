@@ -64,9 +64,19 @@ def start_model_run(request, params, config):
     """
     body = body_object(request)
     session = _load_session(config, required(body, "session_id"))
-    provider = body.get("provider", "openai-compatible")
+    provider = body.get("provider") or "openai-compatible"
+    supplied_model = body.get("model")
+    if isinstance(supplied_model, str) and supplied_model.strip():
+        try:
+            api.require_audit_allowed_model(supplied_model)
+        except ValueError as exc:
+            raise errors.invalid_input(str(exc)) from None
     try:
-        model = api.make_model_adapter(provider)
+        model = api.make_model_adapter(
+            provider,
+            api_key=body.get("api_key"),
+            endpoint=body.get("endpoint"),
+            model=body.get("model"))
     except ProviderConfigError as exc:
         raise ApiError(503, errors.MODEL_NOT_CONFIGURED, str(exc)) from None
     max_turns = int(body.get("max_turns", config.default_max_turns))

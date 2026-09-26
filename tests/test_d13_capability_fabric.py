@@ -179,10 +179,11 @@ class RegistryTests(_Case):
         reg = CapabilityRegistry()
         register_default(reg)
         log = reg.registration_log()
-        self.assertEqual(len(log), 3)
+        self.assertEqual(len(log), 4)
         self.assertEqual({e["capability_id"] for e in log},
                          {"NETWORK_HTTP_REQUEST", "NETWORK_TELNET_SESSION",
-                          "NETWORK_SERVICE_DISCOVERY"})
+                          "NETWORK_SERVICE_DISCOVERY",
+                          "NETWORK_SSH_SESSION"})
 
 
 class TargetModelTests(_Case):
@@ -383,11 +384,8 @@ class SelectorTests(_Case):
 class SshProofTests(_Case):
     def test_registering_ssh_adds_a_fourth_capability(self):
         reg = CapabilityRegistry()
-        register_default(reg)
-        self.assertEqual({d.capability_id for d in reg.all_capabilities()},
-                         {"NETWORK_HTTP_REQUEST", "NETWORK_TELNET_SESSION",
-                          "NETWORK_SERVICE_DISCOVERY"})
         register_ssh(reg)
+        register_default(reg)
         ids = {d.capability_id for d in reg.all_capabilities()}
         self.assertEqual(ids, {"NETWORK_HTTP_REQUEST",
                                "NETWORK_TELNET_SESSION",
@@ -410,11 +408,18 @@ class SshProofTests(_Case):
         with self.assertRaises(AdapterNotBoundError):
             reg.get_adapter("NETWORK_SSH_SESSION").execute({}, [], {})
 
-    def test_ssh_has_no_governed_enum_binding(self):
+    def test_ssh_now_has_a_governed_enum_binding(self):
+        """SSH was descriptor-only; it is now executable via Broker/Policy.
+
+        The declaration still grants nothing on its own — the plan
+        merely becomes an ordinary ActionRequest that must clear Policy.
+        """
         plan = ExecutionPlan(plan_id="DP-x", mission_id="M", target_id="t")
         plan.add_step("NETWORK_SSH_SESSION", {"target": "ssh://h:22"})
-        with self.assertRaises(ValueError):
-            plan_to_action_requests(plan)
+        requests = plan_to_action_requests(plan)
+        self.assertEqual([r.capability for r in requests],
+                         [Capability.NETWORK_SSH_SESSION])
+        self.assertEqual(requests[0].target, "ssh://h:22")
 
 
 class GovernedBridgeTests(_Case):

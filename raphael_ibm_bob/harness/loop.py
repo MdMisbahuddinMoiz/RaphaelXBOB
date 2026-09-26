@@ -107,6 +107,45 @@ def excerpt_output(request, execution) -> Optional[str]:
         matches = evidence.get("matches", [])
         head = [f"{m.get('file')}:{m.get('line')}" for m in matches[:5]]
         return f"matches={len(matches)} {head}"
+    if capability == "network_ssh_session":
+        return _ssh_excerpt(evidence)
+    return str(evidence)[:500] or None
+
+
+def _ssh_excerpt(evidence: Dict[str, Any]) -> Optional[str]:
+    """The governed SSH result, verbatim, so the model can READ it.
+
+    Without this the SSH capability fell through to `str(evidence)[:500]`
+    -- a dict repr that reaches `exit_code` and then truncates long
+    before `stdout`, so a governed command that succeeded returned no
+    observable output to the model at all. That is what made the model
+    re-run the same authorized command turn after turn: it had evidence
+    the command ran and nothing to show for having run it.
+
+    The text is the recorded stdout/stderr EXACTLY as the mediator
+    bounded it -- no summarising, no invention, no redaction of the
+    target's own output (the target's output is the evidence). The
+    ledger record id, command, and exit code ride along so the model
+    can cite provenance rather than restate a rumour.
+    """
+    result = evidence.get("ssh_result") or evidence.get("payload") or {}
+    if not isinstance(result, dict):
+        result = {}
+    command = result.get("command")
+    if command is None:
+        command = (evidence.get("payload") or {}).get("command", "")
+    exit_code = result.get("exit_code")
+    stdout = str(result.get("stdout", "") or "")
+    stderr = str(result.get("stderr", "") or "")
+    evidence_id = evidence.get("evidence_id", "")
+    head = (f"ssh evidence={evidence_id} cmd={command!r} exit={exit_code} "
+            f"stdout_bytes={len(stdout)}")
+    if result.get("stdout_truncated"):
+        head += " (stdout_truncated=true -- output exceeded the declared limit)"
+    parts = [head, stdout] if stdout else [head]
+    if stderr:
+        parts.append(f"stderr: {stderr}")
+    return "\n".join(p for p in parts if p) or None
     return str(evidence)[:500] or None
 
 

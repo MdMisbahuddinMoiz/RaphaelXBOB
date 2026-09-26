@@ -70,6 +70,10 @@ from raphael_ibm_bob.telnet_runtime import (
 from raphael_ibm_bob.discovery_runtime import (
     get_discovery_mediator,
 )
+from raphael_ibm_bob.ssh_runtime import (
+    build_ssh_spec,
+    get_ssh_mediator,
+)
 from raphael_ibm_bob.target_profile import get_target_store
 from raphael_ibm_bob.capability_registry import (
     AdapterNotBoundError,
@@ -129,11 +133,18 @@ class BOBBroker:
         target_store: Optional[Any] = None,
         telnet_mediator: Optional[Any] = None,
         discovery_mediator: Optional[Any] = None,
+        ssh_mediator: Optional[Any] = None,
+        credential_vault: Optional[Any] = None,
         registry: Optional[CapabilityRegistry] = None,
     ):
         self._policy = policy
         self._workspace = workspace
         self._ledger = ledger
+        if (credential_vault is not None
+                and getattr(policy, "_credential_vault", None) is None):
+            # One vault, shared by the authorizer and the mediator, so
+            # Policy can verify a credential reference it will never read.
+            policy._credential_vault = credential_vault
         for cap, seconds in (default_timeouts or {}).items():
             if seconds is None or seconds <= 0:
                 raise ValueError(
@@ -158,6 +169,11 @@ class BOBBroker:
         self._telnet_mediator = telnet_mediator
         # D13+: governed service discovery boundary (additive).
         self._discovery_mediator = discovery_mediator
+        # Governed SSH session boundary (additive; its own mediator).
+        self._ssh_mediator = ssh_mediator
+        # One vault for Policy (authorization) and the SSH mediator
+        # (resolution). Plaintext never leaves it.
+        self._credential_vault = credential_vault
         self._registry = registry
         if self._registry is None:
             from raphael_ibm_bob.capability_bootstrap import register_default
@@ -202,6 +218,7 @@ class BOBBroker:
             "NETWORK_HTTP_REQUEST": "network",
             "NETWORK_TELNET_SESSION": "telnet",
             "NETWORK_SERVICE_DISCOVERY": "discovery",
+            "NETWORK_SSH_SESSION": "ssh",
             "READ": "native",
             "LIST": "native",
             "SEARCH": "native",
@@ -395,6 +412,11 @@ class BOBBroker:
                 decision=decision)
         if kind == "discovery":
             return self._execute_discovery(
+                stamped=request, mission=mission, request_seq=request_seq,
+                decision_seq=decision_seq, evidence_ids=evidence_ids,
+                decision=decision)
+        if kind == "ssh":
+            return self._execute_ssh(
                 stamped=request, mission=mission, request_seq=request_seq,
                 decision_seq=decision_seq, evidence_ids=evidence_ids,
                 decision=decision)
@@ -941,6 +963,10 @@ class BOBBroker:
                 "ports_probed": result.ports_probed,
                 "ports_open": list(result.ports_open),
                 "capped": result.capped,
+                # The exact swept port list, so no consumer can mistake a
+                # bounded sweep for an exhaustive scan of the port space.
+                "probed_ports": list(result.probed_ports),
+                "exhaustive": False,
             }
             is_success = result.state is DiscoveryState.SUCCESS
             execution = ExecutionResult(
@@ -984,8 +1010,123 @@ class BOBBroker:
             request_seq=request_seq, decision_seq=decision_seq,
             result_seq=result_seq, evidence_ids=tuple(evidence_ids))
 
+    # Governed SSH session path ------------------------------------------
+
+    def _execute_ssh(
+        self,
+        *,
+        stamped: ActionRequest,
+        mission: Mission,
+        request_seq: int,
+        decision_seq: int,
+        evidence_ids: List[str],
+        decision: PolicyDecision,
+    ) -> BrokerResult:
+        """Execute ONE governed SSH session through the SshMediator.
+
+        The ONLY path for the SSH capability, and the only caller of the
+        mediator. It builds the mission-declared spec, delegates a single
+        already-approved command, and persists UNTRUSTED ssh evidence.
+        It never calls execute_capability, never opens a session itself,
+        and never spawns a process.
+
+        The credential is a REFERENCE here. Plaintext is resolved inside
+        the mediator from the process-local vault and is dropped before
+        this method regains control, so nothing written below can
+        contain a secret.
+        """
+        run_id = (self._ledger.run_dir().name
+                  if self._ledger is not None else "in-memory")
+        mediator = self._ssh_mediator or get_ssh_mediator()
+        store = (self._target_store if self._target_store is not None
+                 else get_target_store())
+        profile = store.get_target(mission.mission_id)
+
+        if profile is None:
+            execution = ExecutionResult(
+                sequence=stamped.sequence, success=False, output="",
+                error="ssh-no-authorized-target",
+                evidence={PROVIDER_UNTRUSTED: True})
+        else:
+            spec = build_ssh_spec(mission, profile,
+                                  vault=getattr(mediator, "_vault", None))
+            if spec is None:
+                execution = ExecutionResult(
+                    sequence=stamped.sequence, success=False, output="",
+                    error="ssh-no-session-spec",
+                    evidence={PROVIDER_UNTRUSTED: True})
+            else:
+                invocation_id = "SSH-" + hashlib.sha256(
+                    f"{run_id}:{stamped.sequence}".encode("utf-8")
+                ).hexdigest()[:16]
+                result = mediator.invoke(
+                    request=stamped, profile=profile, spec=spec,
+                    invocation_id=invocation_id, run_id=run_id,
+                    decision=decision)
+                evidence: Dict[str, Any] = {
+                    "ssh_result": result.to_dict(),
+                    "ssh_spec": spec.sensitive_dict(),
+                    PROVIDER_UNTRUSTED: True,
+                    "capability": Capability.NETWORK_SSH_SESSION.value,
+                    "invocation_id": result.invocation_id,
+                    "session_id": result.session_id,
+                    "mission_id": result.mission_id,
+                    "target_id": result.target_id,
+                    "host": result.host,
+                    "port": result.port,
+                    "protocol": result.protocol,
+                    "username": result.username,
+                    "command": result.command,
+                    "command_decision": result.command_decision,
+                    "authenticated": result.authenticated,
+                    "exit_code": result.exit_code,
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "stdout_truncated": result.stdout_truncated,
+                    "stderr_truncated": result.stderr_truncated,
+                    "stdout_sha256": result.stdout_sha256,
+                    "stderr_sha256": result.stderr_sha256,
+                    "commands_executed": result.commands_executed,
+                }
+                execution = ExecutionResult(
+                    sequence=stamped.sequence, success=result.success,
+                    output=f"ssh:{result.state.value}",
+                    error=(result.error or None), evidence=evidence)
+
+        with self._lock:
+            self.capability_invocations += 1
+            self.audit.append({"stage": "execution", **execution.to_dict()})
+
+        result_seq: Optional[int] = None
+        if self._ledger is not None:
+            result_seq = self._ledger.append_result(
+                request_seq=request_seq, decision_seq=decision_seq,
+                result=execution)
+            ssh_payload = dict(execution.evidence)
+            ssh_payload.update({
+                "request_seq": request_seq, "decision_seq": decision_seq,
+                "result_seq": result_seq,
+            })
+            exec_ev_id = digest_id({
+                "request_seq": request_seq, "decision_seq": decision_seq,
+                "result_seq": result_seq,
+                "invocation_id": execution.evidence.get("invocation_id"),
+                "capability": Capability.NETWORK_SSH_SESSION.value,
+            }, prefix="SX")
+            self._ledger.append_evidence(
+                evidence_id=exec_ev_id, producer="ssh",
+                request_seq=request_seq, decision_seq=decision_seq,
+                result_seq=result_seq, payload=ssh_payload)
+            evidence_ids.append(exec_ev_id)
+
+        return BrokerResult(
+            decision=decision, execution=execution, capability_invoked=True,
+            request_seq=request_seq, decision_seq=decision_seq,
+            result_seq=result_seq, evidence_ids=tuple(evidence_ids))
+
     def next_sequence(self) -> int:
         with self._lock:
             return self._sequence + 1
+
 
 __all__ = ["BOBBroker", "BrokerResult"]

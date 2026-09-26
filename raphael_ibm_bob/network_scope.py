@@ -122,6 +122,50 @@ def parse_telnet_target(url: object) -> ParsedTarget:
     return ParsedTarget(scheme=scheme, host=host, port=port, path="",
                         url=url.strip())
 
+_SSH_SCHEME = "ssh"
+_DEFAULT_SSH_PORT = 22
+
+
+def parse_ssh_target(url: object) -> ParsedTarget:
+    """Parse and validate an ``ssh://host:port`` target (fail closed).
+
+    Deliberately stricter than the Telnet parser in one respect that
+    matters for a credentialed session: the path MUST be empty or "/".
+    A path would be an implied remote command, and this boundary takes
+    commands from the governed ``cmd=`` clause, never from the URL.
+
+    Userinfo is forbidden outright — a ``user:pass@host`` URL would put
+    a credential in a string that reaches the ledger.
+    """
+    if not isinstance(url, str) or url.strip() == "":
+        raise NetworkScopeError("target url is required")
+    parts = urlsplit(url.strip())
+    scheme = parts.scheme.lower()
+    if scheme != _SSH_SCHEME:
+        raise NetworkScopeError(f"unsupported scheme: {scheme or 'none'}")
+    if parts.username is not None or parts.password is not None:
+        raise NetworkScopeError("userinfo is forbidden in the target url")
+    if parts.fragment:
+        raise NetworkScopeError("fragment is forbidden in the target url")
+    if parts.path not in ("", "/"):
+        raise NetworkScopeError(
+            "path is forbidden in the target url: commands are governed")
+    if parts.query:
+        raise NetworkScopeError("query is forbidden in the target url")
+    host = canonical_host(parts.hostname or "")
+    # `urlsplit(...).port` raises ValueError (not None) for an
+    # out-of-range port, so it must be read defensively or a malformed
+    # target escapes NetworkScopeError as an unrelated exception type.
+    try:
+        port = parts.port
+    except ValueError:
+        raise NetworkScopeError("port out of range") from None
+    port = port if port is not None else _DEFAULT_SSH_PORT
+    if not (1 <= port <= 65535):
+        raise NetworkScopeError(f"port out of range: {port}")
+    return ParsedTarget(scheme=scheme, host=host, port=port, path="",
+                        url=url.strip())
+
 
 def host_in_scope(scope: object, host: object) -> bool:
     """True iff ``host`` exactly matches, or is CIDR-contained by, ``scope``.
@@ -172,6 +216,7 @@ __all__ = [
     "ParsedTarget",
     "canonical_host",
     "host_in_scope",
+    "parse_ssh_target",
     "parse_http_target",
     "parse_telnet_target",
     "scope_contains_host",

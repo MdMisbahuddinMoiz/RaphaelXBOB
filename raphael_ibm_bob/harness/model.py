@@ -2,16 +2,19 @@
 
 The model PROPOSES; RAPHAEL decides and executes. This module defines
 only the seam: what context goes in, what structured proposal comes
-out. There is deliberately no provider implementation here — no LLM
-credentials, endpoints, or routing exist in this repository. The one
-concrete adapter, `ScriptedModelAdapter`, is an explicitly labeled
-deterministic test double (scripted replies for tests/demos), never
-presented as a working model provider.
+out. It holds no credentials, no endpoints, and no routing — those live
+in `harness.providers`, behind the `ModelAdapter` protocol declared
+here. The planner consumes a `ModelAdapter` and never learns which
+provider is behind it.
+
+`ScriptedModelAdapter` is an explicitly labeled deterministic test
+double (scripted replies for tests/demos), never presented as a working
+model provider.
 """
-from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Protocol, Tuple, runtime_checkable
+from typing import Any, Dict, List, Optional, Protocol, Tuple, \
+    runtime_checkable
 
 from raphael_ibm_bob.contracts import ActionRequest, Finding, Mission
 
@@ -22,7 +25,9 @@ class ModelContext:
 
     Deliberately small (same discipline as FocusedContext): the model
     sees the mission, finding summaries with states, workspace
-    facts, a bounded file listing, and recent turn outcomes — never
+    facts, a bounded file listing, recent turn outcomes, and the
+    governed observations folded back from the evidence ledger (the
+    services/ports a discovery pass actually reported) — never
     credentials, never raw policy internals, never the full ledger.
     """
     mission: Mission
@@ -35,6 +40,19 @@ class ModelContext:
     # M14 specialization context (compact; declarations only).
     available_roles: Tuple[Dict[str, Any], ...] = ()
     active_task: Optional[Dict[str, Any]] = None
+    #: The authorized session scope the operator declared (SSH today):
+    #: target, protocol, username, and — critically — the exact commands
+    #: this mission may run. Without it the model can only GUESS, and a
+    #: guessed command is denied exactly as an illegal one would be.
+    #: A declaration grants no authority; it only tells the model what a
+    #: legal proposal looks like.
+    authorized_session: Optional[Dict[str, Any]] = None
+    #: Governed observations folded back from the evidence ledger —
+    #: e.g. the services/ports a NETWORK_SERVICE_DISCOVERY pass actually
+    #: reported. Bounded and structured; this is what lets the model
+    #: choose its NEXT action from real evidence rather than repeating
+    #: the previous one. Never credentials, never raw policy internals.
+    observations: Tuple[Dict[str, Any], ...] = ()
 
     def summary(self) -> Dict[str, Any]:
         return {
@@ -53,6 +71,8 @@ class ModelContext:
             "session_id": self.session_id,
             "available_roles": list(self.available_roles),
             "active_task": self.active_task,
+            "authorized_session": self.authorized_session,
+            "observations": list(self.observations),
         }
 
 

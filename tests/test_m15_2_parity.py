@@ -273,7 +273,8 @@ class ParityTests(_ParityCase):
                 {s["skill"] for s in payload["available_skills"]},
                 {"read-file", "list-dir", "search-dir", "write-file",
                  "run-test", "network-http-request",
-                 "network-telnet-session"})
+                 "network-telnet-session", "network-service-discovery",
+                 "network-ssh-session"})
             self.assertTrue(all("role" in s
                                 for s in payload["available_skills"]))
 

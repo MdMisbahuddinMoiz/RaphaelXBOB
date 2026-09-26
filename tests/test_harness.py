@@ -278,16 +278,24 @@ class CliSurface(unittest.TestCase):
 
 
 class DefaultSkills(unittest.TestCase):
-    def test_five_generic_skills(self):
+    def test_default_skills_cover_every_declared_capability(self):
         from raphael_ibm_bob.skills import (
             default_registry,
             register_default_skills,
         )
         reg = register_default_skills(default_registry())
         ids = sorted(s.id for s in reg.list_skills())
+        # The governed network capabilities are declared so the model
+        # planner can PROPOSE them; the proposal still crosses
+        # Runtime -> Broker -> Policy.
         self.assertEqual(ids, ["list-dir", "network-http-request",
+                               "network-service-discovery",
+                               "network-ssh-session",
                                "network-telnet-session", "read-file",
                                "run-test", "search-dir", "write-file"])
+        declared = {d.capability.value for d in reg.list_capabilities()}
+        self.assertEqual({s.capability.value for s in reg.list_skills()},
+                         declared)
         proposal = reg.propose("read-file", "src/a.txt")
         self.assertEqual(proposal.request.capability, Capability.READ)
         self.assertEqual(proposal.request.purpose, "read-file:src/a.txt")
@@ -299,7 +307,7 @@ class DefaultSkills(unittest.TestCase):
         )
         reg = register_default_skills(default_registry())
         register_default_skills(reg)  # second call is a no-op
-        self.assertEqual(len(reg.list_skills()), 7)
+        self.assertEqual(len(reg.list_skills()), 9)
 
 
 class ModelProviderOption(unittest.TestCase):

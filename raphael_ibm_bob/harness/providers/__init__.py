@@ -15,6 +15,20 @@ Credential discipline (enforced by tests):
 If no endpoint/credentials exist in an environment, nothing here can
 run live — that is reported as BLOCKED, never faked.
 """
+from raphael_ibm_bob.harness.providers.config import (
+    DEFAULT_MAX_TOKENS,
+    DEFAULT_PROVIDER,
+    DEFAULT_TEMPERATURE,
+    DEFAULT_TIMEOUT_SECONDS,
+    PROVIDER_DEFAULT_ENDPOINTS,
+    ProviderBuilder,
+    ProviderConfig,
+    ProviderRegistry,
+    build_provider_config,
+    default_provider_registry,
+    provider_default_endpoint,
+)
+
 from raphael_ibm_bob.harness.providers.openai_compat import (
     DoneSignal,
     OpenAICompatAdapter,
@@ -28,13 +42,24 @@ from raphael_ibm_bob.harness.providers.openai_compat import (
 )
 
 __all__ = [
+    "DEFAULT_MAX_TOKENS",
+    "PROVIDER_DEFAULT_ENDPOINTS",
+    "DEFAULT_PROVIDER",
+    "DEFAULT_TEMPERATURE",
+    "DEFAULT_TIMEOUT_SECONDS",
     "DoneSignal",
     "OpenAICompatAdapter",
     "OpenAICompatConfig",
+    "ProviderBuilder",
     "ProviderCancelled",
+    "ProviderConfig",
     "ProviderConfigError",
     "ProviderError",
+    "ProviderRegistry",
     "ProviderTimeout",
     "StructuredProposalError",
+    "build_provider_config",
+    "default_provider_registry",
+    "provider_default_endpoint",
     "provider_from_env",
 ]

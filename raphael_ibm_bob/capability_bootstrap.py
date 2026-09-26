@@ -29,6 +29,7 @@ from raphael_ibm_bob.capability_registry import (
     PrerequisiteSpec,
     get_registry,
 )
+from raphael_ibm_bob.contracts import Capability
 from raphael_ibm_bob.observation_model import ObservationBuilder
 
 
@@ -161,16 +162,21 @@ def _telnet_descriptor() -> CapabilityDescriptor:
 
 
 def ssh_descriptor() -> CapabilityDescriptor:
-    """Declaration for a future SSH capability (no enum, no adapter yet).
+    """Declaration for the governed SSH session capability.
 
-    Registering this proves the fabric is genuinely target-agnostic: the
-    capability is discoverable and composable, but it fails closed on
-    execution until a governed adapter and enum binding exist.
+    Previously descriptor-only ("no enum, no adapter yet"), which
+    proved the fabric was target-agnostic. It is now EXECUTABLE: the
+    enum member `Capability.NETWORK_SSH_SESSION` exists and the broker
+    delegates to `raphael_ibm_bob.ssh_runtime.SshMediator`, the only
+    SSH-I/O boundary. Declaration still grants no authority — every
+    request still crosses Runtime -> Broker -> Policy.
     """
     return CapabilityDescriptor(
         capability_id="NETWORK_SSH_SESSION",
         protocol="ssh",
-        description="Governed SSH session capability (declaration only).",
+        description=(
+            "Governed SSH session (one already-approved command per "
+            "session, via the Broker/Policy path only)."),
         prerequisites=frozenset([
             PrerequisiteSpec(kind="service", predicate="ssh",
                              description="SSH service on target"),
@@ -181,7 +187,7 @@ def ssh_descriptor() -> CapabilityDescriptor:
         ]),
         authorization_scope="network_ssh",
         evidence_schema="ssh_session_v1",
-        execution_adapter="raphael_ibm_bob.capability_adapters.ssh",
+        execution_adapter="raphael_ibm_bob.ssh_runtime",
         verifier_binding=None,
         falsifier_binding=None,
         mission_types=frozenset(
@@ -211,7 +217,14 @@ def _discovery_descriptor() -> CapabilityDescriptor:
 
 
 def network_descriptors() -> list:
-    """The declared governed network capabilities (HTTP + Telnet + Discovery)."""
+    """Governed network capabilities (HTTP + Telnet + Discovery).
+
+    SSH is deliberately NOT here: it is declared by the D15 descriptor
+    catalogue (`d15_capability_catalogue.d15_descriptors`), which the
+    applicability matrix composes with this list. Listing it in both
+    would register the same capability id twice, and duplicate
+    registration is a governance violation.
+    """
     return [_http_descriptor(), _telnet_descriptor(), _discovery_descriptor()]
 
 
@@ -227,6 +240,13 @@ def register_default(registry: Optional[CapabilityRegistry] = None
         if registry.has(descriptor.capability_id):
             continue
         registry.register(descriptor, InertAdapter())
+    # The SSH declaration is registered here too (idempotently) so the
+    # Broker's default registry can bind a governed adapter. The
+    # InertAdapter is the fail-closed placeholder: only the Broker's
+    # binding table turns it executable.
+    ssh = ssh_descriptor()
+    if not registry.has(ssh.capability_id):
+        registry.register(ssh, InertAdapter())
     return registry
 
 
@@ -247,7 +267,6 @@ def bind_governed_adapters(registry: CapabilityRegistry, runtime: Any,
     Only call this with the real governed Runtime. The adapter delegates
     to Runtime -> Broker -> Policy; the registry never executes directly.
     """
-    from raphael_ibm_bob.contracts import Capability
     ids = capability_ids or [d.capability_id
                              for d in registry.all_capabilities()]
     for capability_id in ids:

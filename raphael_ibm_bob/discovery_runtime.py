@@ -25,6 +25,7 @@ import hashlib
 import json
 import socket
 import threading
+import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -127,10 +128,19 @@ class DiscoveryResult:
     run_id: str = ""
     error: str = ""
     capped: bool = False    # True when the port list was hard-capped
+    #: The exact port list this invocation actually probed. Published so
+    #: a consumer can never mistake a bounded sweep for an exhaustive
+    #: scan of the port space.
+    probed_ports: Tuple[int, ...] = ()
 
     @property
     def success(self) -> bool:
         return self.state is DiscoveryState.SUCCESS
+
+    @property
+    def exhaustive(self) -> bool:
+        """A discovery sweep is NEVER exhaustive over the port space."""
+        return False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -146,6 +156,8 @@ class DiscoveryResult:
             "run_id": self.run_id,
             "error": self.error,
             "capped": self.capped,
+            "exhaustive": False,
+            "probed_ports": list(self.probed_ports),
             PROVIDER_UNTRUSTED: True,
         }
 
@@ -173,7 +185,9 @@ def suggested_protocols(ports: Sequence[int]) -> Tuple[str, ...]:
     return tuple(sorted(hits & set(ALLOWED_PROTOCOLS)))
 
 
-def _parse_port_spec(purpose: str) -> Tuple[Tuple[int, ...], int]:
+def _parse_port_spec(purpose: str,
+                     authorized: Sequence[int] = ()
+                     ) -> Tuple[Tuple[int, ...], int]:
     """Parse operator-supplied port specification from ActionRequest.purpose.
 
     Accepted forms (in purpose string):
@@ -181,17 +195,38 @@ def _parse_port_spec(purpose: str) -> Tuple[Tuple[int, ...], int]:
         ports=1-1024               inclusive range
         (absent)                   use DEFAULT_MAX_PORTS common ports
 
+    `purpose` doubles as the proposal's rationale, so a model may write
+    "ports=8080) to see what answers". The port list is therefore read
+    as the well-formed PREFIX of the clause token, and the remainder
+    must start at a separator. A clause whose continuation is itself
+    port-ish (`ports=80a`, `ports=1-2-3`) or which never begins with a
+    digit (`ports=abc`) is still a malformed spec and still raises —
+    fail-closed is preserved, only trailing prose is tolerated.
+
     Returns (tuple-of-ports, effective-max-ports).
     Raises ValueError for malformed specs.
     """
     import re
-    # Extract ports= clause
-    m = re.search(r"ports=([^\s]+)", purpose or "")
+    # Extract the ports= clause and its token.
+    m = re.search(r"ports=(\S+)", purpose or "")
     if not m:
-        # Return the default common-port sweep.
-        return _default_ports(), DEFAULT_MAX_PORTS
+        # No ports= clause: sweep the AUTHORIZED set (plus common ports)
+        # rather than a fixed 38-port guess list. `authorized` comes from
+        # the mission-bound TargetProfile, so this is declared scope, not
+        # a guess. DEFAULT_MAX_PORTS bounds the returned count.
+        sweep = _default_ports(authorized)
+        return sweep, min(len(sweep), DEFAULT_MAX_PORTS)
 
-    spec = m.group(1).strip()
+    token = m.group(1)
+    prefix = re.match(r"[0-9][0-9,\-]*", token)
+    if prefix is None:
+        raise ValueError(f"invalid port: {token.split(',')[0]!r}")
+    spec = prefix.group(0)
+    trailing = token[len(spec):]
+    if trailing and (trailing[0].isalnum() or trailing[0] in ",-"):
+        # The clause continues with port-list characters, so the whole
+        # token is meant to be the spec and it is malformed.
+        raise ValueError(f"invalid port: {token!r}")
     # Range: e.g. 1-1024
     range_m = re.fullmatch(r"(\d+)-(\d+)", spec)
     if range_m:
@@ -220,19 +255,71 @@ def _parse_port_spec(purpose: str) -> Tuple[Tuple[int, ...], int]:
             raise ValueError("ports spec produced no ports")
         ports = tuple(sorted(set(ports_list)))
 
+    # AUTHORIZATION IS A FLOOR, NOT A SUGGESTION.
+    #
+    # Whatever range the caller asked for, every port the operator
+    # declared in the TargetProfile is ALSO swept. Otherwise a model
+    # could propose ports=1-1024, hit the bounded cap, and silently
+    # never see the SSH service the operator explicitly authorized —
+    # exactly the failure this path exists to prevent.
+    #
+    # Authorized ports are placed FIRST so the hard cap can only ever
+    # truncate the caller's own exploration, never the declared scope.
+    extra_authorized: List[int] = []
+    for port in authorized or ():
+        try:
+            value = int(port)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= value <= 65535 and value not in ports:
+            extra_authorized.append(value)
+    if extra_authorized:
+        ports = tuple(extra_authorized) + ports
+
     if len(ports) > MAX_DISCOVERY_PORTS:
         ports = ports[:MAX_DISCOVERY_PORTS]
 
     return ports, len(ports)
 
 
-def _default_ports() -> Tuple[int, ...]:
-    """Return a compact, opinionated default sweep of common service ports."""
+def _parse_max_ports(purpose: object) -> int:
+    """Read an optional ``max_ports=`` clause from a discovery purpose.
+
+    Lets a mission or a model widen one sweep within the hard ceiling.
+    A malformed value raises, so the caller fails closed. Returns 0
+    when the clause is absent, meaning "use the mediator bound".
+    """
+    text = purpose if isinstance(purpose, str) else ""
+    match = re.search(r"max_ports=(\d+)", text)
+    return int(match.group(1)) if match else 0
+
+
+def _default_ports(authorized: Sequence[int] = ()) -> Tuple[int, ...]:
+    """Bounded sweep for a discovery request with no ``ports=`` clause.
+
+    The sweep is built from AUTHORIZATION, not from a guess: every port
+    the operator declared in the TargetProfile is included, because a
+    declared port is exactly the scope Policy will later authorize. The
+    common well-known set is added so a model still gets the usual
+    service picture when the profile authorizes nothing extra.
+
+    The result is deduplicated, sorted, and bounded by
+    ``MAX_DISCOVERY_PORTS``; the caller still reports ``capped`` and
+    ``ports_probed`` truthfully, so a truncated sweep is never presented
+    as exhaustive.
+    """
     common = sorted(_WELL_KNOWN.keys())
-    # Add a few extra that are common in HTB/lab contexts
-    extra = [135, 139, 389, 636, 2049, 4443, 8000, 8008,
+    extra = [135, 139, 389, 636, 2049, 2222, 4443, 8000, 8008,
              8081, 8888, 9000, 9090, 10000]
-    return tuple(sorted(set(common + extra)))
+    ports = set(common) | set(extra)
+    for port in authorized or ():
+        try:
+            value = int(port)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= value <= 65535:
+            ports.add(value)
+    return tuple(sorted(ports)[:MAX_DISCOVERY_PORTS])
 
 
 def _probe_port(host: str, port: int, timeout: float) -> PortResult:
@@ -354,14 +441,27 @@ class DiscoveryMediator:
 
         # 3. Parse port spec from request purpose (fail closed on malformed).
         try:
-            ports, _ = _parse_port_spec(request.purpose or "")
+            ports, _ = _parse_port_spec(
+                request.purpose or "", profile.allowed_ports)
         except ValueError as exc:
             return _deny(f"port-spec-invalid:{exc}")
 
-        # 4. Hard-cap to mediator max_ports.
-        capped = len(ports) > self._max_ports
+        # 4. Bound the sweep. The per-invocation ceiling is the smaller
+        #    of the mediator's configured bound and a mission-declared
+        #    `max_ports`, both clamped to MAX_DISCOVERY_PORTS. A model
+        #    can therefore widen a sweep on a later turn, but never past
+        #    the hard ceiling, and any truncation is reported as `capped`.
+        ceiling = self._max_ports
+        try:
+            requested = int(_parse_max_ports(request.purpose or ""))
+        except ValueError:
+            requested = 0
+        if requested > 0:
+            ceiling = min(ceiling, requested)
+        ceiling = max(1, min(ceiling, MAX_DISCOVERY_PORTS))
+        capped = len(ports) > ceiling
         if capped:
-            ports = ports[: self._max_ports]
+            ports = ports[:ceiling]
 
         # 5. Execute bounded probes.
         t_start = time.monotonic()
@@ -406,6 +506,7 @@ class DiscoveryMediator:
             host=canonical,
             ports_probed=len(results),
             ports_open=open_ports,
+            probed_ports=tuple(p.port for p in results),
             port_results=tuple(results),
             elapsed_seconds=elapsed,
             run_id=run_id,

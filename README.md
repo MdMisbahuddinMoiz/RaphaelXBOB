@@ -61,6 +61,42 @@ See [`CANONICAL_DEMO.md`](CANONICAL_DEMO.md) for full demo documentation.
 
 ---
 
+## AI Agent Vertical Slice
+
+Raphael can be driven by an AI model end to end. Open the Web UI, select a
+provider/model, declare a target, start the agent, and watch the model
+reason over observations while **Raphael** governs every consequential
+action.
+
+```bash
+# 1. Run the whole slice against a local fixture (127.0.0.1:8080)
+./scripts/run_agent_demo.sh
+
+# 2. Start the Web UI and open the agent console
+PYTHONPATH=. python3 -m raphael_ibm_bob.http        # then browse to /agent
+
+# 3. Run the vertical-slice tests
+PYTHONPATH=. python3 -m unittest tests.test_agent_vertical_slice
+```
+
+```text
+OBSERVE -> MODEL -> PROPOSAL -> Broker -> Policy -> Capability -> Evidence -> MODEL
+```
+
+The model **proposes only**. It holds no capability, mediator, socket, or
+subprocess handle; it returns one `ActionRequest` per turn, and Raphael
+decides whether that action runs. The governed
+`NETWORK_SERVICE_DISCOVERY` capability is offered to the model through the
+skill registry, and its UNTRUSTED evidence is folded back into the next
+turn's context so the model can choose a different next action.
+
+Full architecture, credential discipline, and honest limitations:
+[`docs/AI_AGENT_VERTICAL_SLICE.md`](docs/AI_AGENT_VERTICAL_SLICE.md).
+
+---
+
+---
+
 ## Hackathon Demo
 
 The governed **network** path (TESTING / HTB) has a dedicated canonical

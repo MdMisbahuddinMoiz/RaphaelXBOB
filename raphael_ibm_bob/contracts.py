@@ -57,6 +57,12 @@ class Capability(str, Enum):
     #: match the declared locator; port range is operator-declared. Output is
     #: UNTRUSTED evidence usable by the Planner for TargetProfile refinement.
     NETWORK_SERVICE_DISCOVERY = "network_service_discovery"
+    #: Governed SSH session (one already-approved command per session,
+    #: executed through the Broker/Policy path). The model proposes a
+    #: single ActionRequest; it never receives a session, a channel, or
+    #: a process handle. Credentials are referenced by id and resolved
+    #: from a process-local vault; plaintext never enters evidence.
+    NETWORK_SSH_SESSION = "network_ssh_session"
 
 
 CapabilityId: TypeAlias = Capability | str

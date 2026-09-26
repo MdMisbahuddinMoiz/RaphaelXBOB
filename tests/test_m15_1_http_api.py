@@ -262,7 +262,9 @@ class Discovery(_HTTPCase):
     def test_O_skills_and_filters(self):
         status, data = self.call("GET", "/skills")
         self.assertEqual(status, 200)
-        self.assertEqual(len(data["skills"]), 7)
+        self.assertEqual(len(data["skills"]), 9)
+        self.assertIn("network-service-discovery",
+                      {s["id"] for s in data["skills"]})
         status, filtered = self.call(
             "GET", "/skills?role=investigator")
         ids = {s["id"] for s in filtered["skills"]}
@@ -283,7 +285,9 @@ class Discovery(_HTTPCase):
         caps = {c["capability"] for c in data["capabilities"]}
         self.assertEqual(caps,
                          {"read", "list", "search", "write", "run_test",
-                          "network_http_request", "network_telnet_session"})
+                          "network_http_request", "network_telnet_session",
+                          "network_service_discovery",
+                          "network_ssh_session"})
         status, by_role = self.call(
             "GET", "/capabilities?role=test_analyst")
         self.assertEqual({c["capability"] for c in by_role["capabilities"]},
@@ -434,5 +438,34 @@ class GovernanceStatic(unittest.TestCase):
                 self.assertNotIn(token, src, f"{token} in {path}")
 
 
+
+class ModuleEntryPointTests(unittest.TestCase):
+    """`python -m raphael_ibm_bob.http.app` must actually serve pages.
+
+    Running a module that has a `__main__` guard under `-m` executes it
+    twice: once as `__main__` and once as the real
+    `raphael_ibm_bob.http.app` the route modules import. The router's
+    `isinstance(response, Response)` check then fails against the
+    route's own Response, the HTML response gets wrapped in a JSON one,
+    and every page dies with "Object of type Response is not JSON
+    serializable" — a server that binds its port and then 500s on every
+    request. The entry point therefore serves from the package module.
+    """
+
+    def test_module_entry_point_delegates_to_the_package_module(self):
+        import raphael_ibm_bob.http.app as app
+        source = Path(app.__file__).read_text(encoding="utf-8")
+        guard = source.split('if __name__ == "__main__":', 1)[1]
+        self.assertIn("main()", guard)
+        self.assertIn("_package_module", guard)
+
+    def test_no_duplicate_response_class_is_created_under_dash_m(self):
+        """The real invariant: one live Response class, not two."""
+        import raphael_ibm_bob.http.app as app
+        from raphael_ibm_bob.http.routes import agent as agent_routes
+        # The route module and the router must resolve the SAME class;
+        # if they did not, the router's isinstance check would fail and
+        # nest one Response inside another.
+        self.assertIs(agent_routes.Response, app.Response)
 if __name__ == "__main__":
     unittest.main()

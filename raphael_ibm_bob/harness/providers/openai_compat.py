@@ -239,9 +239,12 @@ def skill_catalog(registry: CapabilityRegistry) -> List[Dict[str, str]]:
 
 
 _SYSTEM_PROMPT = (
-    "You propose exactly ONE next action for a governed coding agent. "
-    "Reply with a single COMPACT JSON object and nothing else: no "
-    "explanations, no commentary, no whitespace padding. Schema: "
+    "You are the decision step of a GOVERNED SECURITY ASSESSMENT agent. "
+    "The operator has already declared the authorized target; your job "
+    "is to choose the single most informative governed action for THAT "
+    "mission, not to guess at it. Reply with a single COMPACT JSON "
+    "object and nothing else: no explanations, no commentary, no "
+    "whitespace padding. Schema: "
     '{"intent": "act", "skill": "<skill-id from the catalog>", '
     '"target": "<concrete target>", "purpose": "<why>"} '
     'or {"intent": "done"} when the mission needs no further action. '
@@ -251,9 +254,20 @@ _SYSTEM_PROMPT = (
     "Never invent skills, capabilities, or targets outside the catalog. "
     "Do not repeat a capability and target combination already present "
     "in recent turns: build on observed outcomes instead. "
-    "Work toward the mission each turn: inspect unknown files, run "
-    "relevant tests, propose fixes for observed defects, verify fixes, "
-    "then declare done. Act; do not stall re-reading known content."
+    "HOW TO CHOOSE: read the mission, the target profile, and the "
+    "observations already gathered, then pick the next action that "
+    "reduces the most mission uncertainty. Weigh what you already know "
+    "against what you still do not. If the observations already answer "
+    "part of the mission, act on that evidence rather than repeating "
+    "the step that produced it. If you have already fetched or probed "
+    "everything the authorization covers, declare done. "
+    "Choose freely from the catalog: no action sequence is prescribed, "
+    "and you are the only decider. Raphael will independently authorize "
+    "whatever you propose, and may deny it; a denial means the action "
+    "was out of scope, so choose something in scope next turn. "
+    "The purpose field is a ONE-LINE action rationale for the operator "
+    "log. Never emit chain-of-thought, deliberation, or scratch notes; "
+    "the purpose is your entire explanation."
 )
 
 #: Maximum model-supplied file content accepted for WRITE proposals.
@@ -286,7 +300,16 @@ def build_request_body(config: OpenAICompatConfig, context: ModelContext,
 
 
 def parse_response_body(body: Dict[str, Any]) -> str:
-    """Extract the assistant's JSON text or raise ProviderError."""
+    """Extract the assistant's JSON text or raise ProviderError.
+
+    A REASONING model can return `content: null` with its output
+    elsewhere, or return an empty string when `max_tokens` was consumed
+    before any action was emitted. Both fail closed here. The
+    `reasoning` field is deliberately NEVER read: surfacing it would put
+    chain-of-thought in the operator UI, which this contract forbids.
+    The raised message names which of the two happened so the failure is
+    diagnosable without leaking anything.
+    """
     try:
         choices = body["choices"]
         message = choices[0]["message"]
@@ -296,7 +319,12 @@ def parse_response_body(body: Dict[str, Any]) -> str:
             f"provider response missing choices/message/content: {exc}"
         ) from None
     if not isinstance(content, str) or not content.strip():
-        raise StructuredProposalError("empty model response")
+        detail = ("model returned no content field (reasoning-only "
+                  "response, or max_tokens was exhausted before an "
+                  "action was emitted)"
+                  if content is None else
+                  "model returned empty content")
+        raise StructuredProposalError(f"empty model response: {detail}")
     return content
 
 
@@ -500,6 +528,35 @@ class OpenAICompatAdapter:
             raise ProviderError("provider returned non-object JSON")
         return parsed
 
+def build_adapter(config, registry: CapabilityRegistry
+                  ) -> "OpenAICompatAdapter":
+    """Build an adapter from a NORMALIZED `ProviderConfig`.
+
+    This is the seam that keeps vendor wire-format details out of the
+    planner: `config` exposes only the normalized fields
+    (endpoint / model / api_key / bounds), and the translation into
+    `OpenAICompatConfig` — including the OpenCode header auto-detect —
+    happens here and nowhere else.
+
+    Imported lazily by the provider registry, so this module never
+    depends on `config.py` (which depends on this module for the
+    failure taxonomy).
+    """
+    return OpenAICompatAdapter(
+        config=OpenAICompatConfig(
+            endpoint=config.endpoint,
+            model=config.model,
+            api_key=config.api_key,
+            timeout_seconds=config.timeout_seconds,
+            max_tokens=config.max_tokens,
+            temperature=config.temperature,
+            extra_body=dict(config.extra_body),
+            opencode_headers=getattr(config, "opencode_headers", None),
+        ),
+        registry=registry,
+    )
+
+
 
 __all__ = [
     "ENDPOINT_ENV",
@@ -513,6 +570,7 @@ __all__ = [
     "ProviderError",
     "ProviderTimeout",
     "StructuredProposalError",
+    "build_adapter",
     "build_request_body",
     "config_from_env",
     "parse_response_body",
