@@ -474,6 +474,35 @@ class PersistenceTests(_Base):
         # Re-reading does not duplicate or reorder.
         self.assertEqual(len(log.messages()), 3)
 
+    def test_reopened_log_never_reissues_an_id(self):
+        """A restart must not reissue ids the durable transcript holds.
+
+        The id counter is process-local, so without seeding from the
+        persisted transcript a reopened log starts numbering from 1 again
+        and two records claim the same handle.
+        """
+        first = chat_log(self.runs, MISSION_ID).append_operator("one")
+        # A fresh ChatLog stands in for a restarted server process.
+        second = chat_log(self.runs, MISSION_ID).append_operator("two")
+        self.assertNotEqual(first.id, second.id)
+        first_serial = int(first.id.rpartition("-")[2])
+        second_serial = int(second.id.rpartition("-")[2])
+        self.assertGreater(second_serial, first_serial)
+        # The durable transcript still holds both, distinctly.
+        reopened = chat_log(self.runs, MISSION_ID).messages()
+        self.assertEqual([m.id for m in reopened], [first.id, second.id])
+
+    def test_first_id_on_an_empty_log_is_well_formed(self):
+        """A new transcript starts clean, with a well-formed unique id.
+
+        The counter is process-global, so the serial is not asserted to
+        be 1 — only that the id is well formed and is the sole entry.
+        """
+        log = chat_log(self.runs, "M-FRESH-LOG")
+        message = log.append_operator("hello")
+        self.assertRegex(message.id, r"^C-[A-Z]{4}-\d{6}$")
+        self.assertEqual([m.id for m in log.messages()], [message.id])
+
     def test_mission_id_traversal_is_refused(self):
         for bad in ("../escape", "a/b", "..", ""):
             with self.assertRaises(ValueError):

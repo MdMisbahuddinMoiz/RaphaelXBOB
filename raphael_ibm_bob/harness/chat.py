@@ -221,6 +221,42 @@ def _message_id(prefix: str) -> str:
     return f"C-{prefix[:4].upper()}-{serial:06d}"
 
 
+def _seed_counter(path: Path) -> None:
+    """Advance the process counter past every id already on disk.
+
+    `_COUNTER` is process-local, so a restarted server would otherwise
+    reissue ids the durable transcript already contains: two records
+    claiming the same handle. Ids are the transcript's stable references
+    — the UI keys off them and entries cross-reference them — so they
+    have to stay unique across a restart, not merely within one process.
+
+    Monotonic, taken under the existing counter lock, and the persisted id
+    format is untouched.
+    """
+    global _COUNTER
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    highest = 0
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        serial = str(record.get("id") or "").rpartition("-")[2]
+        if serial.isdigit():
+            highest = max(highest, int(serial))
+    if highest:
+        with _COUNTER_LOCK:
+            _COUNTER = max(_COUNTER, highest)
+
+
 class ChatLog:
     """Append-only transcript + stop flag for one mission."""
 
@@ -230,6 +266,7 @@ class ChatLog:
         self._dir = root / "chat"
         self._path = self._dir / f"{self._mission_id}.jsonl"
         self._stop_path = self._dir / f"{self._mission_id}.stopped"
+        _seed_counter(self._path)
 
     @property
     def mission_id(self) -> str:
