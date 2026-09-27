@@ -11,6 +11,7 @@ so `cancel()` reports whether it acted.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,10 +36,13 @@ from raphael_ibm_bob.replanner import Replanner
 from raphael_ibm_bob.runner import Runner, RunnerOutcome
 from raphael_ibm_bob.runtime import BOBRuntime
 from raphael_ibm_bob.verifier import Verifier
+from raphael_ibm_bob.seal import write_seal
 from raphael_ibm_bob.workspace import Workspace
 
 RUN_STATES = ("pending", "running", "completed", "refused", "failed",
               "cancelled")
+
+_log = logging.getLogger(__name__)
 
 #: `pending` is the Harness's "CREATED" state (run dir allocated, not
 #: yet executing). A run is terminal once it leaves {pending, running}.
@@ -165,6 +169,25 @@ def _mission_type(mission: Mission) -> str:
     return "legacy_read" if "symptom_target" in mission.problem else "web_enum"
 
 
+def _try_write_seal(run_dir: Path) -> None:
+    """Attempt to write seal.json after ledger close; never raises.
+
+    Mirrors ``network_run._try_write_seal`` so a `start_run` run carries
+    chain-level tamper evidence like the network and model paths. Seal
+    failure is logged at WARNING level and remains observable through the
+    existing seal-status behaviour (GET /runs/{id}/seal reports
+    missing-seal or head-mismatch), but it does NOT affect the run's
+    verdict, state, or evidence records.
+    """
+    try:
+        write_seal(run_dir)
+    except Exception as exc:  # noqa: BLE001 — intentional fail-safe
+        _log.warning(
+            "seal write failed for run %s: %s: %s",
+            run_dir.name, type(exc).__name__, exc,
+        )
+
+
 def start_run(session: RaphaelSession, mission: Mission,
               workspace_root: Path, *, runs_root: Path,
               sessions_root: Optional[Path] = None,
@@ -237,11 +260,13 @@ def start_run(session: RaphaelSession, mission: Mission,
         run.finished_at = _utcnow()
         save_run(run)
         ledger.close()
+        _try_write_seal(run_dir)
         if sessions_root is not None:
             save_session(session, sessions_root)
         raise
     save_run(run)
     ledger.close()
+    _try_write_seal(run_dir)
     if sessions_root is not None:
         save_session(session, sessions_root)
     return run

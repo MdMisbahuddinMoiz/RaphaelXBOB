@@ -211,10 +211,19 @@ class RunInspection(_HTTPCase):
         _, run = self.started_run()
         status, data = self.call("GET", f"/runs/{run['run_id']}/seal")
         self.assertEqual(status, 200)
-        # A fresh run has no sidecar seal yet: report honestly (never fake).
+        # A completed run is sealed on arrival: every governed run path now
+        # writes seal.json after its final evidence is persisted.
+        self.assertTrue(data["seal"]["ok"],
+                        f"run should be sealed: {data['seal']['reason']}")
+        self.assertEqual(data["seal"]["reason"], "seal-ok")
+        # A missing sidecar is still reported honestly as a failure — never
+        # faked into a pass. Remove it and the status must degrade.
+        (self.runs / run["run_id"] / "seal.json").unlink()
+        status, data = self.call("GET", f"/runs/{run['run_id']}/seal")
+        self.assertEqual(status, 200)
         self.assertFalse(data["seal"]["ok"])
         self.assertEqual(data["seal"]["reason"], "missing-seal")
-        # Once the seal is written OUTSIDE the HTTP layer, it verifies.
+        # Restoring it verifies again, so the status tracks the artifact.
         from raphael_ibm_bob.seal import write_seal
         write_seal(self.runs / run["run_id"])
         status, data = self.call("GET", f"/runs/{run['run_id']}/seal")
