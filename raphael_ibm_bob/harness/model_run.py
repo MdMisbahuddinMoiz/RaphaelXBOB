@@ -22,7 +22,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple
 
 from raphael_ibm_bob.broker import BOBBroker
 from raphael_ibm_bob.contracts import (
@@ -480,8 +480,22 @@ def run_model_mission(session: RaphaelSession, mission: Mission,
                       sessions_root: Optional[Path] = None,
                       max_turns: int = DEFAULT_MAX_TURNS,
                       probe: Optional[ProbeCallable] = None,
-                      history_window: int = 5,
-                      target_store: object = None) -> ModelRunResult:
+                     history_window: int = 5,
+                     target_store: object = None,
+                     #: --- chat console (additive; defaults unchanged) ---
+                     #: The operator's chat message. It is folded into the
+                     #: `ModelContext` as context only: the model still
+                     #: returns an ordinary ActionRequest and it still
+                     #: travels Runtime -> Broker -> Policy. It grants no
+                     #: authority and never reaches a capability directly.
+                     operator_note: Optional[str] = None,
+                     #: Turn summaries from earlier chat turns of the same
+                     #: mission, so a one-turn chat call still knows what it
+                     #: already did instead of starting blind.
+                     prior_turns: Sequence[dict] = (),
+                     #: Observations folded from earlier turns' ledgers, so
+                     #: evidence continuity survives a per-turn ledger.
+                     prior_observations: Sequence[dict] = ()) -> ModelRunResult:
     """Drive one governed, model-led mission to a terminal state.
 
     The loop is strictly:
@@ -544,18 +558,22 @@ def run_model_mission(session: RaphaelSession, mission: Mission,
 
         for index in range(max_turns):
             observed = fold_observations(ledger)
+            if prior_observations:
+                observed = observed + tuple(prior_observations)
             context = ModelContext(
                 mission=mission,
                 findings=list(store.all()),
                 workspace_root=str(workspace_root),
                 evidence_count=len(ledger.all_records()),
                 workspace_files=files,
-                recent_turns=tuple(turn_log[-history_window:]),
+                recent_turns=tuple(
+                    list(prior_turns)[-history_window:] + turn_log[-history_window:]),
                 session_id=session.session_id,
                 available_roles=roles_ctx,
                 active_task=_task_context(plan),
                 observations=observed,
                 authorized_session=authorized_session_view(mission),
+                operator_note=operator_note,
             )
             try:
                 request = model.propose(context)

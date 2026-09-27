@@ -53,6 +53,14 @@ class ModelContext:
     #: choose its NEXT action from real evidence rather than repeating
     #: the previous one. Never credentials, never raw policy internals.
     observations: Tuple[Dict[str, Any], ...] = ()
+    #: The operator's own message from the chat console, when there is
+    #: one. It is CONTEXT, never an instruction the harness honours: the
+    #: model still returns an ordinary ActionRequest, and the message
+    #: grants no authority that the mission, target profile, and Policy
+    #: do not already grant. Redacted on the way in by
+    #: `harness.chat.operator_message`, so a pasted credential cannot
+    #: reach the provider through it.
+    operator_note: Optional[str] = None
 
     def summary(self) -> Dict[str, Any]:
         return {
@@ -73,7 +81,9 @@ class ModelContext:
             "active_task": self.active_task,
             "authorized_session": self.authorized_session,
             "observations": list(self.observations),
+            "operator_note": self.operator_note,
         }
+
 
 
 @runtime_checkable

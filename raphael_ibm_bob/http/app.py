@@ -475,6 +475,11 @@ def build_router() -> Router:
     router.add("POST", "/agent/start", agent.start)
     router.add("POST", "/agent/target", agent.set_target)
     router.add("GET", "/runs/{run_id}/timeline", agent.timeline)
+    # Chat console: an interaction layer over the SAME governed path.
+    router.add("GET", "/agent/chat", agent.chat)
+    router.add("POST", "/agent/message", agent.message)
+    router.add("POST", "/agent/stop", agent.stop)
+    router.add("POST", "/agent/resume", agent.resume)
     router.add("POST", "/agent/ssh-session", agent.set_ssh_session)
     return router
 

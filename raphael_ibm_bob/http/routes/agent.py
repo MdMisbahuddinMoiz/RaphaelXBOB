@@ -18,6 +18,7 @@ URL, or any response. The console reports only `set` / `unset`.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -27,6 +28,7 @@ from raphael_ibm_bob.credential_provenance import (
     CredentialVault,
 )
 from raphael_ibm_bob.harness import api
+from raphael_ibm_bob.harness.run import find_run_dir
 from raphael_ibm_bob.network_scope import (
     NetworkScopeError,
     parse_ssh_target,
@@ -251,15 +253,43 @@ def console(request, params, config):
             raise errors.bad_request(str(exc)) from None
     timeline, gate = _run_state(config, run_id) if run_id else (None, None)
     ssh_session, ssh_state = _ssh_state(config)
+    target_mission = _any_target(config) or None
+    chat_messages: List[dict] = []
+    chat_stopped = False
+    chat_stop_reason = ""
+    chat_mission = str((target_mission or {}).get("mission_id") or "")
+    if chat_mission:
+        try:
+            chat_payload = api.read_chat(chat_mission, config.runs_root)
+            chat_messages = chat_payload["messages"]
+            chat_stopped = bool(chat_payload["stopped"])
+            if chat_stopped:
+                chat_stop_reason = (
+                    "Mission stopped. No further model turns or capability "
+                    "execution until it is resumed.")
+        except ValueError:
+            chat_messages = []
+    state = _provider_state(config)
+    run_state = "stopped" if chat_stopped else (
+        "refused" if (gate or {}).get("verdict") == "refuse" else (
+            "complete" if (gate or {}).get("verdict") == "complete" else
+            ("running" if timeline else "idle")))
+    turn_count = len((timeline or {}).get("turns") or ())
     html = view.render(
         run_id=run_id,
-        provider_state=_provider_state(config),
-        target=_any_target(config),
+        provider_state=state,
+        target=target_mission or None,
         timeline=timeline,
         gate=gate,
         model_ref=_model_ref(config, run_id) if run_id else None,
         ssh_session=ssh_session,
         ssh_state=ssh_state,
+        chat_messages=chat_messages,
+        chat_stopped=chat_stopped,
+        chat_stopped_reason=chat_stop_reason,
+        run_state=run_state,
+        turn=turn_count,
+        max_turns=int(state.get("max_turns", 0) or 0),
     )
     return Response(200, html, content_type=view.HTML)
 
@@ -512,6 +542,332 @@ def set_ssh_session(request, params, config):
         "/agent", note="SSH session declared."), content_type=view.HTML)
 
 
+
+
+# ---------------------------------------------------------------------------
+# Chat console
+# ---------------------------------------------------------------------------
+#
+# The chat is an interaction layer over the SAME governed path the console
+# already used. A message is context: it is folded into the ModelContext the
+# model already receives, and the model still returns an ordinary
+# ActionRequest that travels Runtime -> Broker -> Policy. There is
+# deliberately no "execute this because the operator said so" branch here.
+
+
+def _chat_mission(config, body: Dict[str, Any]) -> str:
+    """The mission a chat message belongs to."""
+    mission_id = _active_mission_id(config, body)
+    if not mission_id:
+        raise errors.invalid_input(
+            "mission_id is required: declare a target on /agent first")
+    return mission_id
+
+
+def _chat_turns_from_timeline(timeline: Optional[Dict[str, Any]]
+                              ) -> Tuple[List[dict], List[dict]]:
+    """Split a persisted timeline into chat rows.
+
+    Read-only projection of what the governed loop actually recorded. The
+    ledger remains authoritative; this only re-shapes it for the transcript.
+    """
+    actions: List[dict] = []
+    observations: List[dict] = []
+    for turn in (timeline or {}).get("turns") or ():
+        if not isinstance(turn, dict):
+            continue
+        actions.append({
+            "turn_index": turn.get("index"),
+            "capability": (turn.get("proposal") or {}).get("capability"),
+            "target": (turn.get("proposal") or {}).get("target"),
+            "rationale": turn.get("rationale") or "",
+            "policy": turn.get("policy") or {},
+            "execution": turn.get("execution") or {},
+            "evidence": turn.get("evidence") or {},
+        })
+        record = view._discovery_record(turn.get("observation"))
+        if record:
+            observations.append({
+                "host": record.get("host"),
+                "ports_probed": record.get("ports_probed"),
+                "capped": record.get("capped"),
+                "exhaustive": record.get("exhaustive"),
+                "open_ports": [entry.get("port")
+                               for entry in (record.get("open_services") or [])],
+            })
+    return actions, observations
+
+
+def chat(request, params, config):
+    """GET /agent/chat — the mission transcript and its stop state."""
+    body = {k: v[0] for k, v in (request.query or {}).items()}
+    mission_id = _chat_mission(config, body)
+    try:
+        payload = api.read_chat(mission_id, config.runs_root)
+    except ValueError as exc:
+        raise errors.invalid_input(str(exc)) from None
+    return dict(payload, run_state=(
+        "stopped" if payload["stopped"] else "idle"))
+
+
+def message(request, params, config):
+    """POST /agent/message — one governed turn in response to the operator.
+
+    The single most important property of this route is what it does NOT
+    do: it never executes a capability, never touches the Broker, and
+    never interprets the operator's text as a privileged command. It
+    delegates to `api.start_chat_turn`, which runs the ordinary governed
+    loop for a single turn.
+    """
+    body = body_object(request)
+    mission_id = _chat_mission(config, body)
+    text = _text(body, "message")
+    if not text:
+        raise errors.invalid_input("message is required")
+
+    try:
+        log = api.chat_log(config.runs_root, mission_id)
+    except ValueError as exc:
+        raise errors.invalid_input(str(exc)) from None
+    if log.is_stopped():
+        raise errors.conflict(
+            "MISSION_STOPPED",
+            "mission is stopped: no further model turns or capability "
+            "execution until it is resumed")
+
+    log.append_operator(text, run_id=_text(body, "run_id"))
+
+    # (1) MODEL AUTHORIZATION — identical gate to /agent/start. A rejected
+    # model never reaches a provider, the Broker, or Policy.
+    requested_model = _text(body, "model")
+    try:
+        approved_model = api.require_audit_allowed_model(requested_model)
+    except ValueError as exc:
+        raise errors.invalid_input(str(exc)) from None
+
+    store = _store(config)
+    try:
+        profile = store.get_target(mission_id)
+    except Exception:  # noqa: BLE001 — no declared target for this mission
+        profile = None
+    if profile is None:
+        raise errors.invalid_input(
+            f"no authorized target declared for mission {mission_id}")
+
+    # (2) Provider construction — only after the model is authorized.
+    try:
+        model_adapter = api.make_model_adapter(
+            _text(body, "provider") or "openai-compatible",
+            api_key=_text(body, "api_key") or None,
+            endpoint=_text(body, "endpoint") or None,
+            model=requested_model or None)
+    except ProviderConfigError as exc:
+        raise errors.ApiError(503, errors.MODEL_NOT_CONFIGURED,
+                              str(exc)) from None
+
+    ssh_state = store.get_ssh_session(mission_id)
+    problem: Dict[str, Any] = {"ssh": dict(ssh_state)} if ssh_state else {}
+    mission = Mission(
+        mission_id=mission_id,
+        description=_text(body, "description")
+        or f"governed assessment of {profile.locator}",
+        scope=profile.scope,
+        criteria=["service-discovery"],
+        problem=problem,
+    )
+    session = api.create_session(
+        mission=mission,
+        workspace_root=_workspace_root(config, body),
+        project_name=mission_id,
+        model=approved_model or "server-environment",
+        provider=_text(body, "provider") or "openai-compatible",
+        sessions_root=config.sessions_root)
+
+    result = api.start_chat_turn(
+        session, mission, model=model_adapter, message=text,
+        runs_root=config.runs_root,
+        sessions_root=config.sessions_root,
+        target_store=store)
+
+    actions, observations = _chat_turns_from_timeline(result["timeline"])
+    _record_chat_turns(log, result, actions, observations, config)
+    return {
+        "run_id": result["run_id"],
+        "state": result["state"],
+        "terminal": result["terminal"],
+        "gate_verdict": result["gate_verdict"],
+        "turns": result["turns"],
+        "messages": log.to_list(),
+    }
+
+
+def _latest_discovery(config, run_id: str) -> Optional[Dict[str, Any]]:
+    """The discovery result this run's LEDGER actually recorded.
+
+    A turn's `observation` is what the model saw BEFORE it acted, so it
+    can never report the result of its own action. This reads the run's
+    own evidence ledger instead and normalises the latest record produced
+    by network service discovery into what the transcript displays:
+
+        {"host": str, "open_ports": [...], "ports_probed": int,
+         "capped": bool}
+
+    Fail-closed, exactly like `view._discovery_record`. An absent run, an
+    absent or unreadable ledger, a record for another run, a malformed
+    record, or a record whose required fields cannot be established all
+    yield None, and the transcript then says "no evidence produced".
+    Discovery is never reconstructed from the model's belief.
+    """
+    if not run_id:
+        return None
+    try:
+        ledger = find_run_dir(Path(config.runs_root), run_id) / "evidence.jsonl"
+    except (OSError, ValueError):
+        return None
+    try:
+        lines = ledger.read_text(encoding="utf-8").splitlines()
+    except (OSError, ValueError):
+        return None
+
+    latest: Optional[Dict[str, Any]] = None
+    latest_key: Tuple[int, int] = (-1, -1)
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("capability") != "network_service_discovery":
+            continue
+        found = payload.get("discovery_result")
+        if not isinstance(found, dict):
+            continue
+        recorded = found.get("run_id")
+        if isinstance(recorded, str) and recorded and recorded != run_id:
+            continue
+        host = found.get("host")
+        open_ports = found.get("ports_open")
+        ports_probed = found.get("ports_probed")
+        capped = found.get("capped")
+        if not isinstance(host, str) or not host:
+            continue
+        if not isinstance(open_ports, (list, tuple)):
+            continue
+        if not isinstance(ports_probed, int) or isinstance(ports_probed, bool):
+            continue
+        if not isinstance(capped, bool):
+            continue
+        ts = record.get("ts")
+        seq = record.get("seq")
+        key = (ts if isinstance(ts, int) else 0,
+               seq if isinstance(seq, int) else 0)
+        if key >= latest_key:
+            latest_key = key
+            latest = {"host": host,
+                      "open_ports": list(open_ports),
+                      "ports_probed": ports_probed,
+                      "capped": capped}
+    return latest
+
+
+def _record_chat_turns(log, result: Dict[str, Any],
+                       actions: List[dict],
+                       observations: List[dict], config) -> None:
+    """Append the governed outcome of a turn to the transcript."""
+    run_id = result.get("run_id", "")
+    if result.get("terminal") == "model-error":
+        log.append_event(
+            f"MODEL ERROR: {result.get('terminal_reason', '')[:200]}",
+            message_type="model_error", run_id=run_id)
+    for action in actions:
+        policy = action.get("policy") or {}
+        execution = action.get("execution") or {}
+        evidence = action.get("evidence") or {}
+        evidence_ids = evidence.get("evidence_ids") or []
+        capability = action.get("capability") or "unknown"
+        log.append_event(
+            f"{capability} on {action.get('target') or 'the authorized target'}",
+            message_type="action", run_id=run_id,
+            turn_index=action.get("turn_index"),
+            evidence_ids=evidence_ids,
+            detail={"capability": capability,
+                    "target": action.get("target"),
+                    "rationale": action.get("rationale")})
+        log.append_event(
+            f"{str(policy.get('decision', 'n/a')).upper()}"
+            + (f" — {policy.get('reason')}" if policy.get("reason") else ""),
+            message_type="policy", run_id=run_id,
+            turn_index=action.get("turn_index"),
+            detail={"decision": policy.get("decision"),
+                    "reason": policy.get("reason")})
+        if execution.get("executed"):
+            log.append_event(
+                ("Completed" if execution.get("success")
+                 else f"Failed: {execution.get('error') or 'no detail'}"),
+                message_type="execution", run_id=run_id,
+                turn_index=action.get("turn_index"),
+                evidence_ids=evidence_ids)
+        # Evidence the turn PRODUCED. A turn's `observation` is what the
+        # model saw BEFORE it acted, so it cannot report the result of its
+        # own action. Read what the ledger actually recorded for this run
+        # instead: the ports below are the ones discovery really reported,
+        # not a projection of the model's prior belief.
+        produced = _latest_discovery(config, run_id) if run_id else None
+        if produced:
+            body = (f"{produced.get('host')}: "
+                    + (", ".join(str(p) for p in produced.get("open_ports") or [])
+                       or "no open ports in the swept range")
+                    + f" (probed {produced.get('ports_probed')}"
+                    + (", capped" if produced.get("capped") else "")
+                    + ")")
+        elif evidence_ids:
+            body = f"{len(evidence_ids)} record(s) written to the ledger"
+        else:
+            body = "no evidence produced"
+        log.append_event(
+            body, message_type="evidence", run_id=run_id,
+            turn_index=action.get("turn_index"),
+            evidence_ids=evidence_ids,
+            detail=dict(produced or {}, excerpt=str(
+                evidence.get("excerpt") or "")[:300]))
+
+
+def stop(request, params, config):
+    """POST /agent/stop — end the mission's governed chat.
+
+    A real server-side gate: after this, `/agent/message` refuses, so no
+    new model turn and no new capability execution can begin. The
+    synchronous runtime cannot cancel a turn already in flight without
+    unsafe concurrency, so the gate applies from the next turn boundary;
+    that limit is documented rather than papered over.
+    """
+    body = body_object(request)
+    mission_id = _chat_mission(config, body)
+    try:
+        status = api.stop_chat(mission_id, config.runs_root)
+    except ValueError as exc:
+        raise errors.invalid_input(str(exc)) from None
+    return dict(status, run_state="stopped")
+
+
+def resume(request, params, config):
+    """POST /agent/resume — clear the stop gate."""
+    body = body_object(request)
+    mission_id = _chat_mission(config, body)
+    try:
+        status = api.resume_chat(mission_id, config.runs_root)
+    except ValueError as exc:
+        raise errors.invalid_input(str(exc)) from None
+    return dict(status, run_state="idle")
+
+
 __all__ = ["DEFAULT_ENVIRONMENT", "DEFAULT_PLATFORM", "DEFAULT_UI_TURNS",
-           "MAX_UI_TURNS", "console", "set_ssh_session", "set_target",
-           "start", "timeline"]
+           "MAX_UI_TURNS", "chat", "console", "message", "resume",
+           "set_ssh_session", "set_target", "start", "stop", "timeline"]

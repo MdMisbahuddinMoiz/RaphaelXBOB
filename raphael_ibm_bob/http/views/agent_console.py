@@ -32,6 +32,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from raphael_ibm_bob.harness import api
+from raphael_ibm_bob.http.views import agent_chat as ac
 from raphael_ibm_bob.http.views import decision_trace as dt
 
 HTML = "text/html; charset=utf-8"
@@ -86,7 +87,7 @@ def _shell(title: str, body: str) -> str:
         "<meta name=\"viewport\" content=\"width=device-width, "
         "initial-scale=1\">"
         f"<title>{dt._e(title)}</title>"
-        f"<style>{dt._CSS}{_EXTRA_CSS}</style></head><body>"
+        f"<style>{dt._CSS}{_EXTRA_CSS}{ac.CHAT_CSS}</style></head><body>"
         '<header class="cmdbar"><span class="brand">RAPHAEL</span>'
         '<span class="screen">AI Agent</span>'
         '<span class="banner">GOVERNED · MODEL PROPOSES ONLY</span>'
@@ -390,19 +391,38 @@ def render(run_id: str = "",
            model_ref: Optional[Dict[str, str]] = None,
            ssh_session: Optional[Dict[str, Any]] = None,
            ssh_state: Optional[Dict[str, Any]] = None,
+           chat_messages: Optional[List[Dict[str, Any]]] = None,
+           chat_stopped: bool = False,
+           chat_stopped_reason: str = "",
+           run_state: str = "idle",
+           turn: int = 0,
+           max_turns: int = 0,
            error: str = "") -> str:
-    """Render the whole agent console page."""
+    """Render the agent console: mission controls, chat, live evidence.
+
+    The three regions are a PRESENTATION arrangement only. Every control
+    that governed the loop before the chat existed still posts to the
+    same route it always did, and the chat form posts to /agent/message,
+    which runs the same Runtime -> Broker -> Policy path.
+    """
     providers = _provider_options()
     state = dict(provider_state or {})
     mission_id = (target or {}).get("mission_id", "")
     notice = (f'<p class="badge deny">{dt._e(error)}</p>' if error else "")
     return _shell("AI Agent", f"""
 <h1>AI SECURITY AGENT</h1>
-<p class="note">Configure the model provider, declare the authorized
-target, and start the agent. Raphael governs every consequential action
-the model proposes.</p>
+{ac.mission_header(target=target,
+                   provider=state.get("provider", "") or "openai-compatible",
+                   model=state.get("model", "") or "not configured",
+                   run_id=run_id, run_state=run_state, turn=turn,
+                   max_turns=max_turns)}
 {notice}
-<div class="grid2">
+<div class="chatgrid">
+  <div class="cpanel cmission" aria-label="Mission and scope">
+  <div class="sublabel">MISSION &amp; SCOPE</div>
+  <details open><summary class="msgsummary">Configure &amp; start</summary>
+  <div class="abody">
+  <div class="grid2">
   <section class="panel agent">
     <div class="sublabel">1 &middot; MODEL PROVIDER</div>
     {_provider_form(state, providers)}
@@ -473,20 +493,25 @@ the model proposes.</p>
       <input type="hidden" name="workspace_root"
         value="{dt._e(state.get('workspace_root', ''))}">
     <div><button class="btn" type="submit">Start the agent</button></div>
-  </form>
-</section>
-<section class="panel" style="margin-top:14px">
-  <div class="sublabel">4 &middot; GOVERNED SSH SESSION</div>
+  </section>
+  <div class="sublabel" style="margin-top:12px">4 &middot; GOVERNED SSH SESSION</div>
   {_ssh_panel(ssh_session)}
   {_ssh_form(ssh_state)}
-</section>
+  </div></details>
+  </div>
+{ac.chat_panel(mission_id=mission_id, messages=chat_messages or [],
+               stopped=chat_stopped, provider_state=state,
+               stopped_reason=chat_stopped_reason)}
+{ac.evidence_panel(timeline, gate)}
+</div>
 <section class="panel" style="margin-top:14px">
-  <div class="sublabel">5 &middot; GOVERNED LOOP</div>
+  <div class="sublabel">GOVERNED LOOP &middot; TIMELINE</div>
   {_render_run(run_id, timeline, gate, model_ref) if run_id else
-   '<p class="hint">Start the agent to watch each governed turn.</p>'}
+   '<p class="hint">Start the agent, or send a chat message, to watch each '
+   'governed turn.</p>'}
 </section>
-
 """)
+
 
 
 def redirect_page(url: str, note: str = "") -> str:
@@ -502,4 +527,8 @@ def timeline_json(timeline: Optional[Dict[str, Any]]) -> str:
     return json.dumps(timeline or {}, sort_keys=True, default=str)
 
 
-__all__ = ["HTML", "redirect_page", "render", "timeline_json"]
+_discovery_record = ac._discovery_record
+
+
+__all__ = ["HTML", "_discovery_record", "redirect_page", "render",
+           "timeline_json"]

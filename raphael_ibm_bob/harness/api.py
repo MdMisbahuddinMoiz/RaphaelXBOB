@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import (TYPE_CHECKING, Any, Dict, List, Optional, Sequence,
+                    Tuple)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from raphael_ibm_bob.harness.providers.config import ProviderConfig
@@ -29,6 +30,7 @@ from raphael_ibm_bob.contracts import Mission
 from raphael_ibm_bob.evidence_ledger import LedgerReader
 from raphael_ibm_bob.harness.events import collect_events
 from raphael_ibm_bob.harness.model import ModelAdapter
+from raphael_ibm_bob.harness.chat import chat_log
 from raphael_ibm_bob.harness.model_run import (
     DEFAULT_MAX_TURNS,
     ModelRunResult,
@@ -357,6 +359,11 @@ def start_model_run(session: RaphaelSession,
                     sessions_root: Optional[Path] = None,
                     runs_root: Path = DEFAULT_RUNS_ROOT,
                     target_store: Any = None,
+                    #: chat console pass-through; defaults preserve the
+                    #: existing single-shot behaviour exactly
+                    operator_note: Optional[str] = None,
+                    prior_turns: Sequence[dict] = (),
+                    prior_observations: Sequence[dict] = (),
                     ) -> ModelRunResult:
     """Start a model-led governed run (multi-turn, gate at the end).
 
@@ -376,7 +383,10 @@ def start_model_run(session: RaphaelSession,
         max_turns=max_turns,
         sessions_root=(Path(sessions_root)
                        if sessions_root is not None else None),
-        target_store=target_store)
+        target_store=target_store,
+        operator_note=operator_note,
+        prior_turns=prior_turns,
+        prior_observations=prior_observations)
 
 
 def start_discovery_run(
@@ -596,6 +606,124 @@ def get_agent_timeline(run_id: str,
     return payload if isinstance(payload, dict) else None
 
 
+def start_chat_turn(session: RaphaelSession, mission: Mission, *,
+                    model: ModelAdapter,
+                    message: str,
+                    runs_root: Path = DEFAULT_RUNS_ROOT,
+                    sessions_root: Optional[Path] = None,
+                    target_store: object = None,
+                    history_window: int = 5,
+                    ) -> Dict[str, Any]:
+    """Run ONE governed model turn in response to an operator message.
+
+    This is the chat's only route to a consequential action, and it is
+    the same route the console has always used: `start_model_run` ->
+    `run_model_mission` -> `runtime.submit` -> Broker -> Policy. The
+    operator's message is CONTEXT — it reaches the model as
+    `ModelContext.operator_note` and nothing else. There is no chat route
+    to a capability, a mediator, or a network handle of its own: the one
+    execution path in this module is still the runtime's.
+
+    One turn per call (`max_turns=1`): the chat is interactive, so the
+    operator decides when the next observation happens rather than the
+    loop running away unattended. Evidence continuity across turns is
+    preserved by seeding the context with the prior turns' summaries and
+    the observations those ledgers produced.
+    """
+    log = chat_log(runs_root, mission.mission_id)
+    prior = _chat_prior_turns(runs_root, mission.mission_id)
+    result = start_model_run(
+        session, mission=mission, model=model, max_turns=1,
+        sessions_root=sessions_root, runs_root=runs_root,
+        target_store=target_store,
+        operator_note=message,
+        prior_turns=prior["turns"],
+        prior_observations=prior["observations"],
+    )
+    return {
+        "run_id": result.run.run_id,
+        "turns": result.turns,
+        "terminal": result.terminal,
+        "terminal_reason": result.terminal_reason,
+        "gate_verdict": result.gate_verdict,
+        "state": result.run.state,
+        "timeline": get_agent_timeline(result.run.run_id, runs_root) or {},
+        "prior_turns": prior["turns"],
+    }
+
+
+def _chat_prior_turns(runs_root: Path, mission_id: str,
+                      limit: int = 20) -> Dict[str, Any]:
+    """Turn summaries and observations carried in from earlier turns.
+
+    Read from the run directories the chat has already produced, so a
+    one-turn chat call still sees what the mission established. Read-only
+    and derived: nothing here grants authority.
+    """
+    turns: List[dict] = []
+    observations: List[dict] = []
+    try:
+        entries = sorted(
+            (p for p in Path(runs_root).iterdir()
+             if p.is_dir() and (p / "timeline.json").exists()),
+            key=lambda p: p.stat().st_mtime)
+    except OSError:
+        return {"turns": turns, "observations": observations}
+    for entry in entries:
+        try:
+            payload = json.loads(
+                (entry / "timeline.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        for turn in payload.get("turns") or ():
+            if not isinstance(turn, dict):
+                continue
+            observation = turn.get("observation")
+            if observation:
+                observations.append(observation)
+            turns.append({
+                "capability": (turn.get("proposal") or {}).get("capability"),
+                "target": (turn.get("proposal") or {}).get("target"),
+                "decision": (turn.get("policy") or {}).get("decision"),
+                "executed": (turn.get("execution") or {}).get("executed"),
+                "success": (turn.get("execution") or {}).get("success"),
+                "output": ((turn.get("execution") or {}).get("output")
+                           or "")[:400],
+            })
+    return {"turns": turns[-limit:], "observations": observations[-limit:]}
+
+
+def read_chat(mission_id: str, runs_root: Path = DEFAULT_RUNS_ROOT,
+              ) -> Dict[str, Any]:
+    """Read a mission's chat transcript and stop state."""
+    log = chat_log(runs_root, mission_id)
+    return {"mission_id": log.mission_id,
+            "messages": log.to_list(),
+            "stopped": log.is_stopped()}
+
+
+def stop_chat(mission_id: str, runs_root: Path = DEFAULT_RUNS_ROOT,
+              ) -> Dict[str, Any]:
+    """Stop a mission's chat: no further model turns, no further
+    capability execution. A real server-side gate, not a UI flag."""
+    log = chat_log(runs_root, mission_id)
+    status = log.stop()
+    log.append_event("MISSION STOPPED by the operator",
+                     message_type="system")
+    return status
+
+
+def resume_chat(mission_id: str, runs_root: Path = DEFAULT_RUNS_ROOT,
+                ) -> Dict[str, Any]:
+    """Clear the stop gate so the operator may continue."""
+    log = chat_log(runs_root, mission_id)
+    status = log.resume()
+    log.append_event("MISSION RESUMED by the operator",
+                     message_type="system")
+    return status
+
 __all__ = [
     "AUDIT_ALLOWED_MODEL_IDS",
     "AUDIT_ALLOWED_MODEL_LABELS",
@@ -605,6 +733,7 @@ __all__ = [
     "TERMINAL_STATES",
     "available_providers",
     "build_provider_configuration",
+    "chat_log",
     "cancel_run",
     "create_session",
     "describe_workspace",
@@ -624,8 +753,12 @@ __all__ = [
     "list_skills",
     "make_model_adapter",
     "normalize_audit_model_id",
+    "read_chat",
     "require_audit_allowed_model",
+    "resume_chat",
+    "start_chat_turn",
     "start_model_run",
+    "stop_chat",
     "start_discovery_run",
     "start_network_run",
     "start_run",
