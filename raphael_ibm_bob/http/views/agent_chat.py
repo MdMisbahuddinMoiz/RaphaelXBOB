@@ -54,6 +54,29 @@ border-radius:5px;padding:12px;min-width:0}
 .cmission .kv{margin:0}
 .chatlog{display:flex;flex-direction:column;gap:8px;max-height:62vh;
 overflow-y:auto;padding-right:4px;scroll-behavior:smooth}
+
+/* --- 1080p layout ---------------------------------------------------
+   The console forms predate the three-column layout. `.grid2` is a
+   two-column form grid that only collapses at a 1100px VIEWPORT
+   media query — but these forms now live inside a 280px sidebar on a
+   1920px screen, so the query never fired and every field collapsed to
+   roughly 60px wide. Scope the collapse to the sidebar itself rather
+   than to the viewport, which is what the layout actually needs. */
+.cmission .grid2{grid-template-columns:1fr;gap:10px}
+.cmission .grid2>*{min-width:0}
+.cmission input,.cmission select,.cmission textarea{
+  width:100%;min-width:0;box-sizing:border-box}
+.cmission label{display:block}
+
+/* Keep the console inside one screen at 1080p. The mission column is a
+   long configuration form; scrolling it internally beats a 3000px page
+   that pushes the chat transcript below the fold. */
+.cmission{max-height:calc(100vh - 210px);overflow-y:auto}
+.cpanel.cchat{display:flex;flex-direction:column;
+  max-height:calc(100vh - 210px)}
+.cchat .chatlog{flex:1 1 auto;min-height:0;max-height:none}
+.cchat .chatcompose{flex:0 0 auto}
+.cpanel.cevidence{max-height:calc(100vh - 210px);overflow-y:auto}
 .chatlog:focus-within{outline:1px solid var(--primary);outline-offset:2px}
 .msg{border:1px solid var(--border);border-left-width:3px;border-radius:4px;
 padding:8px 10px;background:var(--panel2);min-width:0}
@@ -377,7 +400,7 @@ def chat_panel(*, mission_id: str, messages: Iterable[Dict[str, Any]],
     banner = (f'<p class="badge deny" role="alert">{_e(stopped_reason)}</p>'
               if stopped else "")
     return f"""
-  <section class="cpanel" aria-label="AI agent chat">
+  <section class="cpanel cchat" aria-label="AI agent chat">
     <div class="chathead">
       <span class="sublabel" style="margin:0">AI AGENT CHAT</span>
       <span class="grow"></span>
