@@ -84,6 +84,36 @@ class StructuredProposalError(Exception):
     """Model output failed structural validation (never executed)."""
 
 
+class ModelResponseInvalid(StructuredProposalError):
+    """The provider answered, but with no usable action proposal.
+
+    A first-class state, not a generic parse failure. Carries a
+    machine-readable ``reason`` so the runtime and UI can tell an
+    unusable-but-well-formed answer apart from a transport failure, a
+    malformed proposal, or a Policy denial.
+
+    The `reasoning` field is used only as a PRESENCE signal for
+    classification. Its text is never read into a message, never
+    persisted, and never rendered: chain-of-thought does not belong in
+    the operator transcript.
+    """
+
+    #: finish_reason was "length": generation was truncated before any
+    #: action was emitted (typically the token budget was spent
+    #: deliberating).
+    MAX_TOKENS_EXHAUSTED = "max_tokens_exhausted"
+    #: The model produced reasoning but emitted no action.
+    REASONING_ONLY_NO_ACTION_CONTENT = "reasoning_only_no_action_content"
+    #: No content and no reasoning: nothing usable came back.
+    EMPTY_RESPONSE = "empty_response"
+    #: Content present but blank.
+    EMPTY_CONTENT = "empty_content"
+
+    def __init__(self, reason: str, detail: str = "") -> None:
+        self.reason = reason
+        super().__init__(f"{reason}: {detail}" if detail else reason)
+
+
 class DoneSignal(Exception):
     """Model declared intent=done: terminal signal, not a failure and
     not an action. The turn loop stops; nothing is submitted."""
@@ -300,15 +330,28 @@ def build_request_body(config: OpenAICompatConfig, context: ModelContext,
 
 
 def parse_response_body(body: Dict[str, Any]) -> str:
-    """Extract the assistant's JSON text or raise ProviderError.
+    """Extract the assistant's JSON text or fail closed, typed.
 
-    A REASONING model can return `content: null` with its output
-    elsewhere, or return an empty string when `max_tokens` was consumed
-    before any action was emitted. Both fail closed here. The
-    `reasoning` field is deliberately NEVER read: surfacing it would put
-    chain-of-thought in the operator UI, which this contract forbids.
-    The raised message names which of the two happened so the failure is
-    diagnosable without leaking anything.
+    A reasoning model can answer in a way that carries no usable action
+    at all. Measured against a real MiMo V2.6 Flash response, that is not
+    one failure but three distinguishable ones, and the provider tells us
+    which:
+
+    * `finish_reason == "length"` with no content — generation was
+      truncated. Observed with 511 of 512 completion tokens spent on
+      `reasoning` and `content: null`.
+    * `finish_reason == "stop"` with `content: null` but `reasoning`
+      present — the model deliberated and deliberately emitted no action.
+    * neither content nor reasoning — nothing usable came back.
+
+    Each raises `ModelResponseInvalid` with a machine-readable `reason`,
+    so a model-response problem stays distinguishable from a transport
+    failure (`ProviderError`), a malformed proposal, and a Policy denial.
+
+    The `reasoning` field is used ONLY as a presence signal for that
+    classification. Its text is never read, never included in the error,
+    and never persisted: chain-of-thought does not belong in the operator
+    transcript, and this module will not become the place it leaks.
     """
     try:
         choices = body["choices"]
@@ -318,14 +361,31 @@ def parse_response_body(body: Dict[str, Any]) -> str:
         raise ProviderError(
             f"provider response missing choices/message/content: {exc}"
         ) from None
-    if not isinstance(content, str) or not content.strip():
-        detail = ("model returned no content field (reasoning-only "
-                  "response, or max_tokens was exhausted before an "
-                  "action was emitted)"
-                  if content is None else
-                  "model returned empty content")
-        raise StructuredProposalError(f"empty model response: {detail}")
-    return content
+
+    if isinstance(content, str) and content.strip():
+        return content
+
+    # Presence signal only. The text itself is never inspected or emitted.
+    reasoning_present = bool(message.get("reasoning")) and isinstance(
+        message.get("reasoning"), (str, list, dict))
+    finish_reason = str(body["choices"][0].get("finish_reason") or "")
+
+    if content is None and finish_reason == "length":
+        raise ModelResponseInvalid(
+            ModelResponseInvalid.MAX_TOKENS_EXHAUSTED,
+            "generation truncated before an action was emitted; the "
+            "configured max_tokens was exhausted")
+    if content is None and reasoning_present:
+        raise ModelResponseInvalid(
+            ModelResponseInvalid.REASONING_ONLY_NO_ACTION_CONTENT,
+            "provider returned reasoning but no action content")
+    if content is None:
+        raise ModelResponseInvalid(
+            ModelResponseInvalid.EMPTY_RESPONSE,
+            "provider returned no content and no reasoning")
+    raise ModelResponseInvalid(
+        ModelResponseInvalid.EMPTY_CONTENT,
+        "provider returned empty content")
 
 
 def validate_proposal(data: Any,
@@ -567,8 +627,8 @@ __all__ = [
     "OpenAICompatConfig",
     "ProviderCancelled",
     "ProviderConfigError",
-    "ProviderError",
     "ProviderTimeout",
+    "ModelResponseInvalid",
     "StructuredProposalError",
     "build_adapter",
     "build_request_body",
