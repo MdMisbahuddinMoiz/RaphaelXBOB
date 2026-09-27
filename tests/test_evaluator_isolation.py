@@ -20,8 +20,10 @@ Run: python -m pytest tests/test_evaluator_isolation.py -q
 """
 
 import sys
+from pathlib import Path
 
-sys.path.insert(0, '/home/yaser/raphael-2.0-rbsv2r/src')
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from orchestrator.capabilities.interactive_shell.tty_normalizer import (
     EvidenceExtractor, ParsedCommand,
@@ -101,7 +103,8 @@ def test_run_a_evidence_does_not_leak_into_run_b():
 
 
 def test_environment_no_global_import():
-    src = open("/home/yaser/raphael-2.0-rbsv2r/src/arena/environment.py").read()
+    src = (REPO_ROOT / "src" / "arena" / "environment.py").read_text(
+        encoding="utf-8")
     assert "get_evidence_graph" not in src, (
         "environment.py still references the global evidence graph"
     )
@@ -109,7 +112,7 @@ def test_environment_no_global_import():
 
 def test_arena_entry_fresh_graph_fallback():
     """scripts/arena.py ArenaEntry must mint a fresh graph, never global."""
-    src = open("/home/yaser/raphael-2.0-rbsv2r/scripts/arena.py").read()
+    src = (REPO_ROOT / "scripts" / "arena.py").read_text(encoding="utf-8")
     assert "get_evidence_graph" not in src, (
         "scripts/arena.py still references the global evidence graph"
     )

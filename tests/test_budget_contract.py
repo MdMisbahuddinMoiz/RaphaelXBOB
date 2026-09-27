@@ -18,8 +18,10 @@ Run: python -m pytest tests/test_budget_contract.py -q
 """
 
 import sys
+from pathlib import Path
 
-sys.path.insert(0, '/home/yaser/raphael-2.0-rbsv2r/src')
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from arena.d6_manifest import ITERATION_BUDGET, ACTION_BUDGET
 from arena.ablation import ABLATION_PRESETS
@@ -33,7 +35,8 @@ def test_manifest_budget_constants():
 
 def test_runner_no_hardcoded_iteration_literal():
     """The runner must bind to manifest constants, not a magic literal."""
-    src = open("/home/yaser/raphael-2.0-rbsv2r/src/arena/ablation_runner.py").read()
+    src = (REPO_ROOT / "src" / "arena" / "ablation_runner.py").read_text(
+        encoding="utf-8")
     # All three paths must reference the manifest import.
     assert src.count("max_iterations = ITERATION_BUDGET") == 3, (
         "Not all execution paths bind max_iterations to ITERATION_BUDGET"
@@ -46,7 +49,8 @@ def test_runner_no_hardcoded_iteration_literal():
 
 def test_action_budget_guard_present():
     """Every loop must cap dispatched actions at ACTION_CAP (Gate B)."""
-    src = open("/home/yaser/raphael-2.0-rbsv2r/src/arena/ablation_runner.py").read()
+    src = (REPO_ROOT / "src" / "arena" / "ablation_runner.py").read_text(
+        encoding="utf-8")
     # Three execution paths (raphael, llm_only, scripted) each have the guard
     assert src.count("self.metrics.actions_dispatched < ACTION_CAP") == 3, (
         "Action-budget guard missing in an execution path"
