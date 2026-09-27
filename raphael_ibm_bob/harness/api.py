@@ -133,12 +133,20 @@ AUDIT_ALLOWED_MODEL_IDS = (
     # apart, so the old id could never match. Added on operator
     # instruction after the served id was verified end to end.
     "mimo-v2.6-flash",
+    # Offline demonstration provider. NOT a language model and NOT an AI
+    # model: this is the repo's deterministic OpenAI-compatible endpoint
+    # (demos/local_model_endpoint.py), admitted explicitly so the governed
+    # chat path can be demonstrated with no vendor credential. It is a
+    # reproducible UI/governance fallback and must never be presented as
+    # evidence that an AI model operated autonomously.
+    "local-deterministic",
 )
 
 AUDIT_ALLOWED_MODEL_LABELS = {
     "mimo-2.6-flash": "MiMo 2.6 Flash",
     "muse-spark-1.3": "Muse Spark 1.3",
     "mimo-v2.6-flash": "MiMo v2.6 Flash (served id)",
+    "local-deterministic": "Local deterministic (NOT an AI model) - offline demo",
 }
 
 

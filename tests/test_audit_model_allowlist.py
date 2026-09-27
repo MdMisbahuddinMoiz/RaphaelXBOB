@@ -32,7 +32,8 @@ class AllowListShape(unittest.TestCase):
         """
         self.assertEqual(
             tuple(api.AUDIT_ALLOWED_MODEL_IDS),
-            ("mimo-2.6-flash", "muse-spark-1.3", "mimo-v2.6-flash"))
+            ("mimo-2.6-flash", "muse-spark-1.3", "mimo-v2.6-flash",
+             "local-deterministic"))
 
     def test_labels_cover_every_id(self) -> None:
         self.assertEqual(set(api.AUDIT_ALLOWED_MODEL_LABELS),

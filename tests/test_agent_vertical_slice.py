@@ -674,7 +674,11 @@ class AgentHttpTests(_Base):
 
     def test_non_approved_model_is_rejected_with_422(self):
         self.assertEqual(self._declare().status, 201)
-        for model_id in ("gpt-4", "local-deterministic",
+        # `local-deterministic` is deliberately absent: it is now an
+        # approved offline-demo provider, admitted by
+        # test_each_approved_model_id_is_admitted. The near-miss below
+        # guards against prefix matching admitting unapproved variants.
+        for model_id in ("gpt-4", "local-deterministic-v2",
                          "qwen2.5-coder-3b", "mimo-2.6-flash-x",
                          "muse-spark-1.3.1"):
             with self.subTest(model=model_id):
