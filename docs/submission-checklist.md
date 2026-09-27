@@ -1,6 +1,6 @@
 # RAPHAEL — SUBMISSION CHECKLIST
 
-**HEAD**: `beef7ef37` · **Branch**: `hackathon/bob-assisted-raphael` · **Python**: 3.14.4
+**HEAD**: `3f13a7238` · **Branch**: `hackathon/bob-assisted-raphael` · **Python**: 3.14.4
 **Product**: `raphael_ibm_bob/` — stdlib-only, no third-party runtime dependencies.
 
 Status vocabulary: **VERIFIED** (physically executed on the current tree) ·
@@ -49,6 +49,14 @@ Status vocabulary: **VERIFIED** (physically executed on the current tree) ·
       reducer gap, individually justifiable. The 1 skip is environment-dependent.
 - [x] **VERIFIED [2026-09-27]** — the suite leaves committed evidence intact:
       `git diff --stat -- arena/results/raw` is empty after a full run.
+
+- [x] **VERIFIED [2026-09-27]** — agent console verified at **1920x1080**. The
+      three-column layout fits one screen and every mission field is legible: the page
+      height fell from 3380px to 1235px and the count of sub-90px form inputs went from
+      12 to 0. Root cause was a two-column form grid (`.grid2`) that only collapsed at a
+      1100px *viewport* query while the forms sat in a 280px sidebar on a 1920px screen.
+      Fixed by scoping the collapse to the sidebar. CSS only — no capability surface
+      touched. *(resolved in `3f13a7238`)*
 
 - [x] **VERIFIED [2026-09-27]** — the submission archive reproduces the full suite from a
       **different** directory: 2161 passed / 0 failed from
