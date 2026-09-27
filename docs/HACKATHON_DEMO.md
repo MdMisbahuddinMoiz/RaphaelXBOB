@@ -1,135 +1,178 @@
-# RAPHAEL × IBM BOB — Hackathon Demo
+# RAPHAEL — 3-MINUTE HACKATHON DEMO RUNBOOK
 
-This document explains what the demonstration shows, how to run it, what the
-evaluator will see, and — precisely — what it does **not** claim.
+**HEAD**: `0ebb9f389` · **Branch**: `hackathon/bob-assisted-raphael` · **Python**: 3.14.4
 
-Canonical entrypoint:
+This is the runbook for the live browser demonstration. Every command below was executed
+and its output recorded; the transcript in §5 is verbatim, not illustrative.
+
+**What this demo proves**: the governed chat path, end to end, in a browser —
+operator message → model proposal → Broker → Policy → capability → ledger evidence →
+transcript. The model proposes; Raphael alone authorises.
+
+---
+
+## 0. THE THREE STATES — read before demoing
+
+| State | What it is | Status |
+|---|---|---|
+| **PROVEN** | Governed chat console in a real browser against a real controlled target | **Reproducible today** |
+| **PROVEN (historical)** | Real MiMo V2.6 Flash vertical slice at `a7d4d1357` — governed discovery, SSH, evidence-driven replanning, user-to-root | Real, but not re-run in this environment |
+| **CURRENT OFFLINE DEMO** | `local-deterministic` provider | **NOT an AI model.** Deterministic rule table. Proves governance, not reasoning |
+| **NEXT DEMONSTRATION** | Kioptrix Level 1 | **NOT demonstrated.** Do not claim otherwise |
+
+Never present the deterministic run as evidence that an AI model reasoned autonomously.
+
+---
+
+## 1. Bring up the controlled target
+
+The demo target is a disposable local fixture that serves HTTP on `127.0.0.2:8080` and SSH
+on `127.0.0.2:2222`.
 
 ```bash
-./scripts/run_hackathon_demo.sh --preflight   # READY / NOT READY / OPTIONAL
-./scripts/run_hackathon_demo.sh --status      # environment + recent runs
-./scripts/run_hackathon_demo.sh --success     # governed run → 7/7 COMPLETE
-./scripts/run_hackathon_demo.sh --refuse      # honest refusal → REFUSE
-./scripts/run_hackathon_demo.sh --tests       # one-command release suite
+cd /home/moiz/lab-scratch/raphael-target
+python3 target_server.py          # leave running
+```
+
+In a second shell, verify before you demo:
+
+```bash
+ss -ltn | grep -E '127\.0\.0\.2:(8080|2222)'
+# LISTEN 0  5  127.0.0.2:8080  0.0.0.0:*
+# LISTEN 0  8  127.0.0.2:2222  0.0.0.0:*
+
+cd /home/moiz/lab-scratch/raphael-target && python3 verify_target.py
+# ---- 14/14 passed
 ```
 
 ---
 
-## 1. What RAPHAEL × IBM BOB demonstrates
+## 2. Bring up the model provider
 
-Raphael is a **governed agentic execution loop**. It plans against a mission,
-executes only through a mediated boundary, records append-only evidence, verifies
-and falsifies its own findings, and lets a **single** QualityGate decide
-completion.
+### 2a. Offline (no credential — the default demo path)
 
-The demo shows the governed **network** path end-to-end:
-
-```text
-TESTING / HTB
-  → TargetProfile (authorized target)
-  → NETWORK_HTTP_REQUEST (the only network capability: HTTP GET/HEAD)
-  → Policy ALLOW
-  → execution through Runtime → Broker → Policy → NetworkMediator
-  → independent behavior probe (separate governed observation)
-  → RUN_TEST
-  → regression evidence
-  → QualityGate
-  → 7/7 COMPLETE
+```bash
+cd /home/moiz/raphael-2.0-rbsv2r
+PYTHONPATH=. python3 -c "
+import time
+from demos.local_model_endpoint import LocalModelEndpoint
+with LocalModelEndpoint(host='127.0.0.1', port=8799) as e:
+    print('local model endpoint on', e.base_url, flush=True)
+    time.sleep(3600)
+"
 ```
 
-and the honest counterpart:
+This is the repo's own OpenAI-compatible endpoint. It labels itself `local-deterministic`
+in every response, so no log, transcript, or evidence record can imply a hosted model ran.
 
-```text
-target/service unavailable (or required evidence absent)
-  → no fabricated result
-  → QualityGate REFUSE
+### 2b. Real model (flagship demo — needs a credential you supply)
+
+```bash
+export RAPHAEL_MODEL_ENDPOINT=https://openrouter.ai/api/v1
+export RAPHAEL_MODEL_NAME=xiaomi/mimo-v2.6-flash
+export RAPHAEL_MODEL_API_KEY=<supplied at runtime; never committed>
+```
+
+Nothing else changes. The adapter path is identical.
+
+---
+
+## 3. Start Raphael
+
+```bash
+cd /home/moiz/raphael-2.0-rbsv2r
+
+# offline
+RAPHAEL_MODEL_ENDPOINT=http://127.0.0.1:8799/v1 \
+RAPHAEL_MODEL_NAME=local-deterministic \
+RAPHAEL_MODEL_API_KEY=local-offline-not-a-secret \
+PYTHONPATH=. python3 -m raphael_ibm_bob.http.app
+```
+
+Binds `127.0.0.1:8787` (override with `RAPHAEL_HTTP_PORT`).
+
+With no provider configured the server still starts and still serves the console; a chat
+turn then fails closed with `MODEL_NOT_CONFIGURED` rather than pretending to run.
+
+---
+
+## 4. The 3-minute browser sequence
+
+Open **http://127.0.0.1:8787/agent**.
+
+| # | Beat | What the viewer sees |
+|---|------|----------------------|
+| 1 | Open the Agent console | Header `GOVERNED · MODEL PROPOSES ONLY`; mission panel, provider, target |
+| 2 | Declare the authorized target | `127.0.0.2`, ports `8080,2222`, protocols `http,ssh`, scope locked to that host |
+| 3 | Send a chat message | The operator turn appears in the transcript |
+| 4 | Show provider identity | Name the provider out loud: `local-deterministic` (**not** an AI model) or `xiaomi/mimo-v2.6-flash` |
+| 5 | Action proposal | `network_service_discovery on 127.0.0.2` — the model *proposes* |
+| 6 | Broker / Policy decision | `ALLOW — ok` — Raphael *decides*, in its own visual language |
+| 7 | Evidence | `127.0.0.2: 2222, 8080 (probed 2)` — read from the run ledger, not from the model's belief |
+| 8 | Send a follow-up message | A second governed turn; prior turns and observations are carried forward |
+| 9 | Stop the mission | `POST /agent/stop` — the chat refuses further turns; this is a real server-side gate |
+| 10 | State the objective honestly | See the claim boundary below |
+
+**Operator message to send:**
+
+> Begin an authorized reconnaissance of the declared target and report your findings as you proceed.
+
+If the console form is unavailable, the same turn via HTTP:
+
+```bash
+curl -sS -X POST -H 'Content-Type: application/json' \
+  -d '{"host":"127.0.0.2","port_spec":"8080,2222","protocols":"http,ssh","authorization_ref":"local-lab","environment":"isolated-lab"}' \
+  http://127.0.0.1:8787/agent/target
+
+curl -sS -X POST -H 'Content-Type: application/json' \
+  -d '{"message":"Begin an authorized reconnaissance of the declared target and report your findings as you proceed."}' \
+  http://127.0.0.1:8787/agent/message
 ```
 
 ---
 
-## 2. Architecture
+## 5. Expected transcript — VERBATIM
 
-```text
-                                  Operator
-                                     │  (UI / HTTP API only)
-                                     ▼
-                             BOB HTTP / UI
-                    /command /operations /mode /htb/target
-                                     │
-                                     ▼
-                                  Harness
-              (mission session, deterministic network runner)
-                                     │
-                                     ▼
-                                  Mission
-                (criteria, scope, problem: paths + tests)
-                                     │
-                                     ▼
-                              ActionRequest
-                    (capability, target, purpose, timeout)
-                                     │
-                                     ▼
-                                  Runtime
-                                     │
-                                     ▼
-                                  Broker ─────────────► EvidenceLedger
-                                     │                  (append-only JSONL)
-                                     ▼
-                                  Policy
-                       (allow-list, scope, TargetProfile)
-                                     │
-                                     ▼
-                                 Capability
-                    (READ/WRITE/LIST/SEARCH/RUN_TEST/…,
-                     NETWORK_HTTP_REQUEST = HTTP GET/HEAD only)
-                                     │
-                                     ▼
-                             NetworkMediator
-                        (out-of-process HTTP GET, no redirects,
-                         replay guard, digest of response)
-                                     │
-                                     ▼
-                              EvidenceLedger
-                                     │
-               ┌─────────────────────┼─────────────────────┐
-               ▼                     ▼                     ▼
-            Verifier              Probe                 Falsifier
-        (independent verify)  (independent          (decoy / counter-
-                               behavior oracle)       example challenge)
-               └─────────────────────┼─────────────────────┘
-                                     ▼
-                               QualityGate  (conditions A–G)
-                                     │
-                        ┌────────────┴────────────┐
-                        ▼                          ▼
-                    COMPLETE                    REFUSE
+This is the actual recorded output of the run above, not a mock-up:
+
+```
+user        Begin an authorized reconnaissance of the declared target and report your findings as you proceed.
+action      network_service_discovery on 127.0.0.2
+policy      ALLOW — ok
+execution   Completed
+evidence    127.0.0.2: 2222, 8080 (probed 2)
 ```
 
-> **COMPLETE can only come from the QualityGate.** No caller, provider,
-> capability, or demo script can emit it. The demo driver only *reads* the
-> persisted gate record.
+Each message type renders in its own visual language — an operator instruction, a model
+proposal, a governance decision, an execution outcome and evidence are not the same kind
+of claim and must not look the same.
+
+The evidence line is produced by reading `runs/<run_id>/evidence.jsonl`. A turn's
+observation is what the model saw *before* it acted, so it cannot report the result of its
+own action. If the ledger has no usable record, the transcript says **"no evidence
+produced"** — it never invents services.
 
 ---
 
-## 3. Governance flow
+## 6. Governance — what is actually enforced
 
-1. **Declare** — the operator declares a `TargetProfile` (platform, locator,
-   allowed ports/protocols, scope, authorization reference). Declaration is not
-   authorization.
-2. **Request** — the Harness builds an `ActionRequest`; the Runtime stamps it
-   with dense sequence numbers.
-3. **Mediate** — the Broker routes every request through Policy. Policy enforces
-   the capability allow-list and target scope (network targets against the
-   `TargetProfile` scope, not the workspace path).
-4. **Execute** — only an ALLOWed capability executes; `NETWORK_HTTP_REQUEST`
-   issues a single out-of-process HTTP GET (no redirects, no scanning).
-5. **Record** — request → decision → result → evidence are appended to the
-   immutable ledger with SHA-256 digests.
-6. **Verify / Probe / Falsify** — the Verifier confirms findings, the
-   independent probe asserts a behavior invariant, the Falsifier challenges the
-   finding (a decoy path must not return the flag).
-7. **Gate** — `BOBQualityGate` evaluates conditions **A–G** purely from the
-   ledger and issues `COMPLETE` or `REFUSE`.
+A proposal must pass, in order:
+
+1. **Model authorisation** — the model id is checked against the audit allow-list
+   *before* a provider is constructed. A rejected model never reaches a provider, the
+   Broker, or Policy.
+2. **Target declaration** — no `TargetProfile`, no run. The operator must name the
+   authorised host, ports, and protocols; Raphael never infers them.
+3. **Runtime** — the proposal becomes an `ActionRequest` submitted to the runtime.
+4. **Broker → Policy** — the sole authority on whether a capability executes. The model
+   cannot self-certify; a caller asserting success does not make it so.
+5. **Evidence** — request → decision → result → evidence recorded in an append-only,
+   causally chained ledger.
+6. **QualityGate** — an independent verdict. `COMPLETE` only when the evidence satisfies
+   its conditions; otherwise `REFUSE`.
+
+**There is exactly one governed execution path.** No `chat → capability`, no
+`chat → shell`, no `chat → subprocess`, no broker bypass. A chat message is context.
 
 ### QualityGate conditions
 
@@ -143,194 +186,88 @@ target/service unavailable (or required evidence absent)
 | F | `F:evidence` | complete request → decision → result → evidence chain |
 | G | `G:finding-state` | no unresolved UNVERIFIED, REFUTED-without-replan, or invalid VERIFIED findings |
 
----
-
-## 4. Success demo (DEMO A)
-
-```bash
-./scripts/run_hackathon_demo.sh --success
-```
-
-The driver talks only to the product HTTP API and then reads the persisted run.
-
-Expected (validated) output — abbreviated:
-
-```text
-[6] Governed execution
-     run_id: 20260922T184344_cad5ac
-[7] Evidence
-     producers: ['execution', 'network', 'policy', 'probe', 'regression']
-[8] Verification / probe
-     probe: allowed=True invariant=authorized-http-endpoint-reachable-and-serving status=200 bytes=11159
-     regression: test=test_ok.py returncode=0 result=passed
-[9] QualityGate
-     [*] A:mission-criterion
-     [*] B:required-tests
-     [*] C:regression
-     [*] D:independent-behavior-probe
-     [*] E:scope
-     [*] F:evidence
-     [*] G:finding-state
-[10] Final verdict
-     conditions: 7/7
-     verdict: COMPLETE
-RESULT: 7/7 COMPLETE
-```
-
-Exit code `0`.
+> **COMPLETE can only come from the QualityGate.** No caller, provider, or model may emit
+> it. Where required evidence is absent, the gate emits `REFUSE` rather than converting
+> absence into a pass — and that refusal is reported as a refusal.
 
 ---
 
-## 5. Refusal demo (DEMO B)
+## 7. Showing a DENY
+
+A denial is a stronger demo than a clean run: it shows the model asking for something and
+Policy refusing.
+
+The scripted demos exercise the refusal path directly:
 
 ```bash
 ./scripts/run_hackathon_demo.sh --refuse
+# RESULT: REFUSE (honest: failure was not reported as COMPLETE)
 ```
 
-The driver declares an **authorized but unavailable** service. The governed
-requests are ALLOWed by Policy, but the service does not answer, so no probe
-evidence exists. Raphael records the failure and the gate refuses.
-
-```text
-[7] Evidence
-     producers: ['execution', 'network', 'policy', 'regression']
-     network: / state=refused status=None bytes=0
-[9] QualityGate
-     [x] D:independent-behavior-probe
-     failed: ['D:independent-behavior-probe']
-     reasons: ['behavior_probe_ok=False (no probe proof supplied)']
-[10] Final verdict
-     conditions: 6/7
-     verdict: REFUSE
-RESULT: REFUSE (honest: failure was not reported as COMPLETE)
-```
-
-Exit code `0` (the demo objective — an honest refusal — was met). If a refusal
-run ever rendered `COMPLETE`, the driver would exit `1`.
+In the chat UI a denial appears as a `policy` message reading `DENY — <reason>` in the
+deny styling, with the reason shown. Whatever the model proposes, Policy remains
+authoritative.
 
 ---
 
-## 6. UI pages to open
+## 8. Evidence on disk
 
-| Page | What to look at |
+For any run, `runs/<run_id>/` contains:
+
+| File | Contents |
 |---|---|
-| `/command` | Command Center — mission + recent runs |
-| `/operations` | Operations console — mode, VPN, target, start |
-| `/operations/{run_id}` | run overview, state, gate verdict |
-| `/operations/{run_id}/decision-trace` | gate A–G checklist (7/7 or the failed condition) |
-| `/operations/{run_id}/events` | append-only event stream |
-| `/operations/findings` | findings and their lifecycle states |
-| `/operations/evidence` | evidence records by producer |
-| `/runs` | durable run index |
-| `/runs/{run_id}/gate` | the persisted gate record |
-| `/mode` | product mode (`testing` / `htb`) |
-| `/vpn/status` | VPN state (secrets never exposed) |
-| `/htb/target` | declared TargetProfile |
+| `harness.json` | the run record |
+| `evidence.jsonl` | the append-only, causally chained ledger |
+| `timeline.json` | the governed-loop projection rendered in the console |
+| `artifacts/` | result payloads |
+| `seal.json` | integrity seal (present on sealed runs) |
 
----
-
-## 7. Exact operator sequence
+Re-export evidence for a run with:
 
 ```bash
-cd <repo>
-# 1. (optional external target) bring up the VPN
-# 2. start the server
-RAPHAEL_OPENVPN_BIN=/usr/sbin/openvpn PYTHONPATH=. \
-  python3 -m raphael_ibm_bob.http --host 127.0.0.1 --port 8787 &
-
-# 3. preflight
-./scripts/run_hackathon_demo.sh --preflight
-
-# 4. success
-./scripts/run_hackathon_demo.sh --success
-
-# 5. refusal
-./scripts/run_hackathon_demo.sh --refuse
-
-# 6. one-command release suite
-./scripts/run_hackathon_demo.sh --tests
+python3 scripts/demo_export.py <run_id> demo/<name>
 ```
 
-Environment overrides: `RAPHAEL_BASE_URL`, `RAPHAEL_TARGET_HOST`,
-`RAPHAEL_TARGET_PORT`, `RAPHAEL_REQUEST_PATH`, `RAPHAEL_PROBE_PATH`,
-`RAPHAEL_MISSION_ID`.
-
 ---
 
-## 8. Expected QualityGate output
+## 9. Known limitations — state them, do not hide them
 
-Success: all seven conditions PASS, `failed=[]`, `unknown=[]` → `COMPLETE (7/7)`.
-
-Refusal: `D:independent-behavior-probe` FAIL with reason
-`behavior_probe_ok=False (no probe proof supplied)` → `REFUSE (6/7)`.
-
-The pass/fail split shown in the UI is derived from the **persisted** gate
-record (its `payload.passed/failed` when present, otherwise its `reasons`);
-UNKNOWN is preserved as UNKNOWN and never rendered as a pass.
-
----
-
-## 9. Evidence interpretation
-
-For a run, `runs/<run_id>/` contains `harness.json` (run record),
-`evidence.jsonl` (append-only ledger), and `artifacts/` (result payloads).
-
-Key records:
-
-- `request` / `decision` / `result` — the governed action and its Policy outcome.
-- evidence `producer="network"` — the raw HTTP observation (state, status,
-  bytes, response digest, invocation id).
-- evidence `producer="probe"` — the independent behavior probe; condition D
-  requires `allowed is True` and a distinct invocation from the flag request.
-- evidence `producer="regression"` — the regression proof tied to the passing
-  `RUN_TEST`.
-- `gate` — the QualityGate decision (the sole completion authority).
-
-See [`demo/success/`](../demo/success) and [`demo/refusal/`](../demo/refusal)
-for exported, machine-readable bundles (`run.json`, `ledger.jsonl`, `gate.json`,
-`summary.json`, `transcript.txt`).
-
----
-
-## 10. Known limitations
-
-- **No exploitation.** The governed capability is `NETWORK_HTTP_REQUEST`
-  (HTTP GET/HEAD only). There is no shell, SMB, Telnet, privilege escalation,
-  port scanning, or arbitrary HTTP method.
-- **No HTTP-served flag from the Breakout VM.** Breakout's flags live in files
-  (`/root/rOOt.txt`, `/home/cyber/user.txt`) and are not served by the HTTP
-  surface; the mission's flag pattern is `HTB{...}`. The successful run
-  therefore reaches `COMPLETE` with condition G satisfied as "no unresolved /
-  refuted / invalid findings" — **not** by capturing a flag.
-- **VPN** is required only for external HTB targets; the local demo target does
-  not need it.
-- **Legacy substrate** under `src/` is outside the governed runtime and is not
-  imported by it.
+- **The offline provider is not an AI model.** `local-deterministic` returns proposals from
+  a fixed rule table. It proves the governed path; it proves nothing about model reasoning.
+- **No real-model run in this environment.** A real MiMo V2.6 Flash mission was demonstrated
+  at `a7d4d1357`; that is a historical validation, not something this environment reproduces.
+- **Kioptrix Level 1 is not demonstrated.** It is prepared as the next authorised training
+  target. No autonomous compromise of it is claimed.
+- **No exploitation in the governed capability set.** `NETWORK_HTTP_REQUEST` is HTTP
+  GET/HEAD only. Privilege escalation and arbitrary methods are outside it.
+- **Legacy substrate** under `src/` sits outside the governed runtime and is not imported by it.
 
 ### Claim boundary (explicit)
 
-Do **not** claim that "Raphael solved Breakout" or that "Raphael captured and
-verified the Breakout root flag". The validated claim is:
+> **Claimed**: Raphael ran a governed chat turn in a browser against an authorised local
+> target. The model proposed a discovery action; Broker and Policy authorised it; the
+> capability executed; the result was written to the append-only ledger and rendered in the
+> transcript from that ledger.
 
-> Raphael executed a governed HTTP operation against the Breakout VM, produced
-> independent behavior-probe evidence, satisfied the required regression/evidence
-> conditions, and reached QualityGate `COMPLETE`. The Breakout VM did not expose
-> its final root flag through the governed HTTP capability.
+> Do **not** claim that "Raphael solved Breakout", that "Raphael captured and verified the
+> Breakout root flag", that Kioptrix has been compromised, or that the deterministic
+> offline run demonstrates autonomous AI reasoning.
+
+On the earlier Breakout VM run specifically: that run reached QualityGate `COMPLETE` with
+condition G satisfied as "no unresolved / refuted / invalid findings" — **not** by capturing
+a flag. The Breakout VM did not expose its final root flag through the governed HTTP
+capability (`NETWORK_HTTP_REQUEST` is GET/HEAD only, and Breakout's flags live in files).
+That distinction is preserved here deliberately.
 
 ---
 
-## 11. Reproducibility
+## 10. Reproducibility
 
-1. Python ≥ 3.11 (validated on 3.14.4). No third-party Python packages are
-   required by the governed core or the demo.
-2. Start the server (see §7).
-3. For a local target: any HTTP service that answers `GET /` and `GET /index.html`
-   (e.g. a stock Apache page). For an external HTB target: connect the VPN and
-   set `RAPHAEL_TARGET_HOST` / `RAPHAEL_TARGET_PORT`.
-4. Run `--preflight`, `--success`, `--refuse`, `--tests`.
-5. Re-export evidence for any run with:
-   `python3 scripts/demo_export.py <run_id> demo/<name>`.
-
-The validated reference runs are
-`20260922T184344_cad5ac` (COMPLETE, 7/7) and `20260922T184344_7686de`
-(REFUSE, 6/7).
+1. Python ≥ 3.11 (validated on 3.14.4). The governed core requires no third-party packages.
+2. Start the target (§1) and verify 14/14 before demoing.
+3. Start a provider (§2) and the server (§3).
+4. Run the browser sequence (§4).
+5. Full suite: `python3 -m pytest -q` → **2156 passed, 0 failed, 1 skipped, 4 xfailed,
+   297 subtests** at `0ebb9f389`.
+6. After any test run, `git diff --stat -- arena/results/raw` must be empty — the suite is
+   isolated from committed evidence (resolved in `9bb6d095c`).

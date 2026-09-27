@@ -1,6 +1,6 @@
 # Raphael — AI-Assisted Governed Security Assessment
 
-Project: Raphael / `raphael-ibm-bob` 2.0.0. Commit `0cbcd263f`, branch
+Project: Raphael / `raphael-ibm-bob` 2.0.0. Commit `0ebb9f389`, branch
 `hackathon/bob-assisted-raphael`. Python 3.14.4. The shipped product
 `raphael_ibm_bob/` is stdlib-only (no third-party runtime dependencies).
 
@@ -39,7 +39,59 @@ only if allowed, records the decision and result as append-only evidence, and
 submits the accumulated evidence to an independent quality gate. The model
 never executes. Raphael decides whether execution is permitted.
 
-## 3. Key innovation — the untrusted-proposal pipeline
+## 3. The interaction layer — AI Agent Chat console
+
+The harness is operated through a governed agent console, and since `8df8b6f39` its
+primary surface is a chat transcript:
+
+    Harness
+     └── AI Agent Console
+          ├── Mission / target configuration
+          ├── Operator chat
+          ├── Action proposals
+          ├── Policy decisions
+          ├── Execution status
+          ├── Evidence
+          └── Timeline
+
+**The chat is an interaction layer over the existing governed runtime, not a second
+execution path and not a command executor.** An operator message is *context*: it reaches
+the model as `ModelContext.operator_note` and nothing else. The model still returns an
+ordinary `ActionRequest`, and that proposal still travels the one governed route:
+
+    Operator message
+      → ModelContext.operator_note   (context only; grants no authority)
+      → provider / model
+      → ActionRequest
+      → Runtime
+      → Broker
+      → Policy
+      → Capability
+      → Evidence
+      → observation folding
+      → next turn
+      → chat + timeline
+
+There is deliberately no `chat → capability`, `chat → shell`, `chat → subprocess` or
+`chat → broker bypass` branch. Each turn runs a single `max_turns=1` governed turn through
+the same `start_model_run` → `run_model_mission` → `runtime.submit` path the console
+already used, so the operator decides when the next observation happens rather than the
+loop running away unattended. Evidence continuity across turns is preserved by seeding the
+context with prior turn summaries and the observations their ledgers produced.
+
+The operator message is redacted on the way in, so a pasted credential cannot reach a
+provider through the chat. `POST /agent/stop` is a real server-side gate: after it,
+`/agent/message` refuses, so no new model turn and no new capability execution can begin.
+
+Routes: `GET /agent/chat`, `POST /agent/message`, `POST /agent/stop`, `POST /agent/resume`.
+
+Transcript evidence shown to the operator is read from the run's own ledger
+(`runs/<run_id>/evidence.jsonl`), never reconstructed from the model's pre-action belief. A
+turn's observation is what the model saw *before* it acted, so it cannot report the result
+of its own action; a missing or malformed record renders as "no evidence produced" rather
+than as invented services.
+
+## 4. Key innovation — the untrusted-proposal pipeline
 
 The pipeline is:
 
@@ -56,7 +108,7 @@ completion. Proposal, authorization, execution, and completion are separate
 roles held by separate components, and only the governance side holds the
 authority to advance from one stage to the next.
 
-## 4. Architecture — the real call path
+## 5. Architecture — the real call path
 
 The governed assistance path is already implemented and uses these exact
 modules:
@@ -93,7 +145,7 @@ propose a revised next step in light of recorded denials and results. Each
 revised proposal re-enters the same governance path. No proposal inherits
 trust from a prior turn.
 
-## 5. Security boundary — enforcement points
+## 6. Security boundary — enforcement points
 
 The boundary is not a single check. It is the ordered set of points a proposal
 must pass:
@@ -129,7 +181,7 @@ Four defects found and fixed this session, each verified by execution:
    disconnected from the results the same demos measured. Now derived from
    measured results in every branch.
 
-## 6. Evidence system
+## 7. Evidence system
 
 Every decision and result is recorded in an append-only JSONL ledger
 (`evidence_ledger.py`). Records are causally chained, and `seal.py` computes a
@@ -147,7 +199,7 @@ modification, deletion, and reordering), not authenticity (it does not prove
 who wrote the ledger). Any claim beyond tamper-evidence would be incorrect,
 and none is made here.
 
-## 7. Model integration
+## 8. Model integration
 
 - **Provider-agnostic.** The runtime depends only on the `ModelAdapter`
   interface (`propose`). Any model that can produce an `ActionRequest` can be
@@ -157,35 +209,76 @@ and none is made here.
   variables (`RAPHAEL_MODEL_ENDPOINT`, `RAPHAEL_MODEL_NAME` and related
   settings). No credentials are stored in source.
 - **Deterministic provider.** `ScriptedModelAdapter` provides a fully
-  offline, deterministic proposal source. The acceptance suite runs entirely
-  through this path: no network, no credentials, no real targets.
+  offline, deterministic proposal source, and the acceptance suite runs
+  entirely through this path: no network, no credentials, no real targets.
+- **Offline demonstration provider.** `demos/local_model_endpoint.py` is a
+  real HTTP server speaking the OpenAI `POST /v1/chat/completions` protocol
+  whose replies come from a fixed rule table. It is admitted explicitly in
+  the audit allow-list as `local-deterministic` and labelled *not an AI
+  model*. It exists so the governed chat path can be demonstrated with no
+  vendor credential. Governance is unaffected: its reply still arrives as a
+  proposal and still crosses Runtime → Broker → Policy.
 - **Real-provider test status: BLOCKED — credentials unavailable.** No
-  environment variables are set, no `.env` file is present, and no local
-  endpoint exists in this environment. The provider code fails closed with
-  `ProviderConfigError: missing model configuration:
-  RAPHAEL_MODEL_ENDPOINT, RAPHAEL_MODEL_NAME`. No credential was requested,
-  invented, or simulated. The full assisted path is reproducible offline via
-  the deterministic provider.
+  `RAPHAEL_MODEL_*` environment variables are set and no `.env` file is
+  present in the current execution environment. The provider code fails
+  closed and names `RAPHAEL_MODEL_ENDPOINT`, `RAPHAEL_MODEL_NAME`,
+  `RAPHAEL_MODEL_API_KEY`. No credential was requested, invented, or
+  simulated. A real MiMo V2.6 Flash mission **was** demonstrated earlier on
+  the `a7d4d1357` vertical-slice checkpoint; that validation is real, and it
+  is not what the current offline run reproduces.
 
-## 8. Measured evidence
+## 9. Measured evidence
 
-Final measured test state: **1941 passed, 4 failed, 1 skipped, 4 xfailed,
-236 subtests in 168.92s.**
+**Current measured test state at `0ebb9f389`: 2156 passed, 0 failed, 1 skipped,
+4 xfailed, 297 subtests in 199.15s.**
 
-Baseline before this session: **1921 passed, 4 failed, 183 subtests.**
+Session trajectory:
 
-The 4 failures are PRE-EXISTING test bugs that open a hardcoded path from
-another machine (`/home/yaser/raphael-2.0-rbsv2r/...`). They are identical in
-baseline and final. They were never hidden, skipped, or weakened to reach the
-final numbers.
+| Checkpoint | passed | failed |
+|------------|--------|--------|
+| `a7d4d1357` (start of session) | 2148 | 6 |
+| `8df8b6f39` after the chat-path fix | 2150 | 4 |
+| `3150a3060` after test portability | 2154 | 0 |
+| `6009afbc6` / `0ebb9f389` | **2156** | **0** |
 
-New acceptance suite `tests/test_assistant_governed_loop.py`: **20 passed,
-53 subtests**, with no network, no credentials, and no real targets.
+The 6 starting failures were: 2 in the chat console (a `NameError` on an
+unwritten helper, `_latest_discovery`, plus a missing `config` parameter) and 4
+that opened a hardcoded path from another machine
+(`/home/yaser/raphael-2.0-rbsv2r/...`). All six are fixed. None was hidden,
+skipped, xfailed, or reclassified.
 
-Net effect of this session: +20 tests passing, +53 subtests, same 4
-pre-existing failures, no regressions introduced.
+Two further defects were found by executing the system rather than by reading it:
 
-## 9. Target agnosticism — TARGET-AGNOSTIC
+- **Arena artifact destruction.** Because `AblationRunner` wrote into a
+  CWD-relative results path and `run_id` is deterministic, every test run
+  truncated committed ablation and negative-control evidence — 3682 lines
+  across 13–14 files on a full run. Resolved in `9bb6d095c` by test-side CWD
+  isolation; the suite now leaves `arena/results/raw` clean.
+- **Chat transcript id collision.** Message ids came from a process-local
+  counter that reset on restart, reissuing ids the durable transcript already
+  held. Resolved in `6009afbc6` by seeding the counter from the persisted log.
+
+Full detail: `reports/TEST_INTEGRITY_AUDIT.md` and `reports/FINAL_TEST_MATRIX.md`.
+
+### PROVEN TODAY
+
+- Governed chat console in a real browser against a real controlled target:
+  `network_service_discovery on 127.0.0.2` → Policy `ALLOW — ok` → execution
+  `Completed` → evidence `127.0.0.2: 2222, 8080 (probed 2)`, read from the run
+  ledger.
+- Controlled target verification: **14/14** fixture checks pass.
+- Real MiMo V2.6 Flash vertical slice at `a7d4d1357`: governed discovery, SSH
+  execution, evidence-driven replanning, user-to-root progression.
+
+### NEXT DEMONSTRATION — not yet proven
+
+- **Kioptrix Level 1** is prepared as the next authorized training target. Its
+  autonomous compromise has **not** been established by the current
+  submission checkpoint, and is not claimed here.
+- A real-model browser run, which requires a hosted-model credential that is
+  unavailable in the current execution environment.
+
+## 10. Target agnosticism — TARGET-AGNOSTIC
 
 The system is **TARGET-AGNOSTIC**. There is zero functional coupling between
 the governance path and any specific target.
@@ -200,7 +293,7 @@ Two-target and three-target genericity have been proven using RFC 5737
 documentation addresses, confirming that multi-target handling exercises only
 the generic profile path and no per-target logic.
 
-## 10. Limitations
+## 11. Limitations
 
 Stated explicitly, without qualification:
 
@@ -218,12 +311,19 @@ Stated explicitly, without qualification:
    REFUSES.** Where required test evidence is absent, the QualityGate emits
    REFUSE rather than converting the absence into a pass. That refusal is the
    correct behaviour and is reported as a refusal, not a completion.
-5. **No real-provider verification.** The OpenAI-compatible provider path is
-   implemented and fails closed without configuration, but no live-model run
-   was performed because credentials were unavailable. All assisted-loop
-   claims rest on the deterministic provider.
+5. **No real-provider verification in the current environment.** The
+   OpenAI-compatible provider path is implemented and fails closed without
+   configuration, but the execution environment used for this submission pass
+   has no `RAPHAEL_MODEL_*` credentials, so no live-model run was performed
+   here. A real MiMo V2.6 Flash mission **was** demonstrated earlier at
+   `a7d4d1357`; that is a historical validation, not something this
+   environment reproduces. Every assisted-loop claim in the current browser
+   checkpoint rests on the deterministic provider, which is not an AI model.
+6. **Kioptrix Level 1 is not yet demonstrated.** It is prepared as the next
+   authorized training target. No autonomous compromise of it is claimed by
+   this submission checkpoint.
 
-## 11. Demo flow — four acts
+## 12. Demo flow — four acts
 
 Brief summary; the dedicated demo document owns the commands.
 
@@ -240,7 +340,7 @@ Brief summary; the dedicated demo document owns the commands.
   and the QualityGate renders its independent verdict from measured evidence:
   COMPLETE only when the evidence satisfies its conditions, otherwise REFUSE.
 
-## 12. What this is not
+## 13. What this is not
 
 This is not a fully autonomous pentesting agent, a self-driving attacker, or
 an exploit planner. It is an AI-assisted governed security assessment

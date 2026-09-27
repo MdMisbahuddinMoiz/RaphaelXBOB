@@ -1,84 +1,128 @@
-MODEL: 4
-ROLE: Regression / Test Specialist
-STATUS: COMPLETE
-FILES CREATED:
-reports/FINAL_TEST_MATRIX.md
-FULL SUITE: passed=1941 failed=4 skipped=1 xfailed=4 subtests=236 duration=169.56s exit=1
-PER-GROUP RESULTS: AI-assisted acceptance: passed=20 failed=0 skipped=0 xfailed=0 subtests=53; target authorization: passed=109 failed=0 skipped=0 xfailed=0 subtests=18; broker / policy / boundary: passed=61 failed=0 skipped=0 xfailed=0 subtests=0; evidence / seal / gate: passed=59 failed=0 skipped=0 xfailed=0 subtests=0; harness / model: passed=84 failed=0 skipped=0 xfailed=0 subtests=0; demos / hero: passed=43 failed=0 skipped=0 xfailed=0 subtests=0
-PRE-EXISTING FAILURES: still the same 4? YES
-REGRESSIONS INTRODUCED: NONE
-DELTA EXPLANATION: The baseline had 4 failed, 1921 passed, 1 skipped, 4 xfailed, 183 subtests in 189.23s. The current run has 4 failed, 1941 passed, 1 skipped, 4 xfailed, 236 subtests in 169.56s. The increase in passed tests (20) and subtests (53) is due to new tests added. No new failures were introduced; the same 4 pre-existing failures persist due to hardcoded paths.
-PROPOSED PATH-FIX PATCH (report only, not applied):
-diff --git a/tests/test_budget_contract.py b/tests/test_budget_contract.py
-index XXXXX..XXXXX 100644
---- a/tests/test_budget_contract.py
-+++ b/tests/test_budget_contract.py
-@@ -18,6 +18,7 @@
- 
- import sys
-+import os
- 
- sys.path.insert(0, '/home/yaser/raphael-2.0-rbsv2r/src')
-@@ -33,7 +34,10 @@
- 
- def test_runner_no_hardcoded_iteration_literal():
-     """The runner must bind to manifest constants, not a magic literal."""
--    src = open("/home/yaser/raphael-2.0-rbsv2r/src/arena/ablation_runner.py").read()
-+    test_dir = os.path.dirname(__file__)
-+    src_path = os.path.join(test_dir, "..", "src", "arena", "ablation_runner.py")
-+    with open(src_path, 'r') as f:
-+        src = f.read()
-     # All three paths must reference the manifest import.
-     assert src.count("max_iterations = ITERATION_BUDGET") == 3, (
-         "Not all execution paths bind max_iterations to ITERATION_BUDGET"
-     )
-@@ -46,7 +50,10 @@
- 
- def test_action_budget_guard_present():
-     """Every loop must cap dispatched actions at ACTION_CAP (Gate B)."""
--    src = open("/home/yaser/raphael-2.0-rbsv2r/src/arena/ablation_runner.py").read()
-+    test_dir = os.path.dirname(__file__)
-+    src_path = os.path.join(test_dir, "..", "src", "arena", "ablation_runner.py")
-+    with open(src_path, 'r') as f:
-+        src = f.read()
-     # Three execution paths (raphael, llm_only, scripted) each have the guard
-     assert src.count("self.metrics.actions_dispatched < ACTION_CAP") == 3, (
-         "Action-budget guard missing in an execution path"
-     )
-diff --git a/tests/test_evaluator_isolation.py b/tests/test_evaluator_isolation.py
-index XXXXX..XXXXX 100644
---- a/tests/test_evaluator_isolation.py
-+++ b/tests/test_evaluator_isolation.py
-@@ -20,6 +20,7 @@
- 
- import sys
-+import os
- 
- sys.path.insert(0, '/home/yaser/raphael-2.0-rbsv2r/src')
-@@ -101,7 +102,10 @@
- 
- def test_environment_no_global_import():
--    src = open("/home/yaser/raphael-2.0-rbsv2r/src/arena/environment.py").read()
-+    test_dir = os.path.dirname(__file__)
-+    src_path = os.path.join(test_dir, "..", "src", "arena", "environment.py")
-+    with open(src_path, 'r') as f:
-+        src = f.read()
-     assert "get_evidence_graph" not in src, (
-         "environment.py still references the global evidence graph"
-     )
-@@ -109,7 +115,10 @@
- 
- def test_arena_entry_fresh_graph_fallback():
-     """scripts/arena.py ArenaEntry must mint a fresh graph, never global."""
--    src = open("/home/yaser/raphael-2.0-rbsv2r/scripts/arena.py").read()
-+    test_dir = os.path.dirname(__file__)
-+    src_path = os.path.join(test_dir, "..", "scripts", "arena.py")
-+    with open(src_path, 'r') as f:
-+        src = f.read()
-     assert "get_evidence_graph" not in src, (
-         "scripts/arena.py still references the global evidence graph"
-     )
-     # default_factory must be EvidenceGraph (fresh per instance).
-     assert "default_factory=EvidenceGraph" in src
-BLOCKERS:
-None
+# FINAL TEST MATRIX
+
+**Repository**: `/home/moiz/raphael-2.0-rbsv2r`
+**Branch**: `hackathon/bob-assisted-raphael`
+**HEAD**: `0ebb9f389` — *feat: admit local-deterministic as an explicit offline demo provider*
+**Runner**: `python3 -m pytest -q` (pytest 9.1.1, CPython 3.14.4)
+**Date of measurement**: 2026-09-27
+
+---
+
+## FULL SUITE — CURRENT
+
+```
+2156 passed, 1 skipped, 4 xfailed, 27 warnings, 297 subtests passed in 199.15s
+```
+
+| Metric | Value |
+|--------|-------|
+| passed | **2156** |
+| failed | **0** |
+| skipped | 1 |
+| xfailed | 4 |
+| subtests passed | 297 |
+| duration | 199.15s |
+| exit code | 0 |
+
+The 4 xfails are the documented D17 `AutonomousLoop` reducer binding gap
+(`tests/test_d17_hardening.py`) — a known limitation, not a suppressed failure.
+
+---
+
+## DELTA — HOW THIS STATE WAS REACHED
+
+| Checkpoint | passed | failed | skipped | xfailed | subtests |
+|------------|--------|--------|---------|---------|----------|
+| `a7d4d1357` (real AI vertical slice, start of session) | 2148 | 6 | 1 | 4 | 295 |
+| `8df8b6f39` (chat console) — after `_latest_discovery` fix | 2150 | 4 | 1 | 4 | 295 |
+| `3150a3060` (test portability) | 2154 | 0 | 1 | 4 | 295 |
+| `6009afbc6` / `0ebb9f389` (id durability + provider admission) | **2156** | **0** | 1 | 4 | **297** |
+
+- **6 → 0 failures.** The 2 chat failures were a `NameError` on an unwritten helper
+  (`_latest_discovery`) plus a missing `config` parameter; the 4 remaining were
+  environment-specific absolute paths in test code.
+- **+2 tests, +2 subtests** from the transcript-id durability regression tests.
+- **Zero regressions introduced** at any step.
+
+---
+
+## VERIFICATION LAYERS
+
+Each layer is a `-k` selection over the same suite. **Layers overlap by design** — a single
+test can exercise discovery and governance together — so these counts must not be summed.
+
+| Layer | Selection | Result |
+|-------|-----------|--------|
+| Agent / chat | `agent or chat` | 121 passed, 31 subtests |
+| Provider / allow-list | `provider or allowlist or audit_model` | 248 passed, 8 subtests |
+| Discovery | `discovery or recon` | 109 passed |
+| SSH | `ssh` | 75 passed, 33 subtests |
+| Governance | `governance or policy or broker or gate or evidence or seal` | 483 passed, 4 subtests |
+| Sandbox / security | `sandbox or security` | 86 passed |
+| Arena integrity | `budget_contract or evaluator_isolation or run_identity or repair_gate or prompted_agent or gate_b` | 50 passed |
+
+### Arena integrity — post-fix assertion
+
+```
+$ git restore -- arena/results/raw
+$ python3 -m pytest -q
+$ git diff --stat -- arena/results/raw
+(empty)
+```
+
+The suite no longer mutates committed ablation and negative-control artifacts. This is the
+acceptance criterion for the defect resolved in `9bb6d095c`; see
+`reports/TEST_INTEGRITY_AUDIT.md` §6.2.
+
+---
+
+## NON-SUITE VERIFICATION (executed, not asserted)
+
+These checkpoints are not unit tests and are proven by execution, recorded here so the
+matrix is not read as "tests only".
+
+| Checkpoint | Evidence | Status |
+|------------|----------|--------|
+| Live browser → chat → governed turn | `GET /agent` renders 25 004 bytes with the chat panel; 16 `.msg` elements; `GOVERNED · MODEL PROPOSES ONLY` | **PROVEN** |
+| Controlled target | `/home/moiz/lab-scratch/raphael-target` — `127.0.0.2:8080` and `127.0.0.2:2222` LISTEN; `verify_target.py` **14/14 passed** | **PROVEN** |
+| Governed discovery against a real target | `network_service_discovery on 127.0.0.2` → Policy `ALLOW — ok` → execution `Completed` → evidence `127.0.0.2: 2222, 8080 (probed 2)` | **PROVEN** |
+| Transcript id durability across restart | server process restarted; next turn continued at `C-USER-000011` with no collision | **PROVEN** |
+| Real hosted-model (MiMo) mission | `a7d4d1357` vertical slice — governed discovery → SSH → evidence-driven replanning → user-to-root | **PROVEN at `a7d4d1357`; not re-run in this environment** |
+| Kioptrix Level 1 autonomous compromise | — | **NOT DEMONSTRATED** — next demonstration target |
+
+---
+
+## PROVIDER MATRIX
+
+| Provider | Model id | Is an AI model | Purpose | Status |
+|----------|----------|----------------|---------|--------|
+| OpenRouter | `xiaomi/mimo-v2.6-flash` | **YES** | real autonomous pentesting demonstration | Validated at `a7d4d1357`; credential unavailable in the current environment |
+| Local deterministic | `local-deterministic` | **NO** | reproducible offline UI/governance demo, no vendor credential | Admitted explicitly in `0ebb9f389`; drives the current browser checkpoint |
+
+Audit allow-list (`raphael_ibm_bob/harness/api.py`):
+`mimo-2.6-flash`, `muse-spark-1.3`, `mimo-v2.6-flash`, `local-deterministic`.
+
+**The offline run is not evidence of autonomous model reasoning.** The deterministic
+provider returns proposals from a fixed rule table; it proves the governed path, not the
+model.
+
+---
+
+## KNOWN LIMITATIONS (unresolved, stated plainly)
+
+1. **Real-model credential unavailable** in the current execution environment. The provider
+   code fails closed and names `RAPHAEL_MODEL_ENDPOINT` / `RAPHAEL_MODEL_NAME` /
+   `RAPHAEL_MODEL_API_KEY`.
+2. **Kioptrix Level 1 has not been autonomously compromised** by the current checkpoint.
+3. **4 xfails** remain for the D17 `AutonomousLoop` reducer gap, documented in `README.md`.
+4. **1 skip** is environment-dependent (sandbox/bubblewrap-class).
+
+---
+
+## PRIOR PATH-FIX PATCH — NOW APPLIED
+
+The [2026-09-26] revision of this document carried a *proposed, unapplied* patch for the
+hardcoded `/home/yaser/...` test paths. It was applied in `3150a3060`, using
+`pathlib` (`REPO_ROOT = Path(__file__).resolve().parents[1]`) rather than the `os.path.join`
+form proposed here. The intent is identical; the failures are gone. Retained for history —
+it is no longer a pending action.
