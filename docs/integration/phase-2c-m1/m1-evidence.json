@@ -7,6 +7,8 @@
     "bpf_sha256": "d1574a64643907e6c95ccafbfc74e7f04977781014ade214011e57994cb65242",
     "builder_argv_len": 151,
     "builder_argv_sha256": "781c36b4eef7e41ccd4bd7fe9707b4f20ce943e4cbef70bc17a78e130d3171ac",
+    "builder_argv_sha256_normalised": "d69578e1f966361d49464b2342c7c90a443df3046daa70cf6241fef24880770f",
+    "builder_argv_sha256_note": "builder_argv_sha256 is the digest over the RAW argv and is therefore tied to the absolute checkout path where the audit ran. builder_argv_sha256_normalised substitutes the checkout root with <REPO_ROOT> before hashing, so it is reproducible from any checkout while still verifying all 151 tokens.",
     "probe_argv_len": 152,
     "cap_drop": "ALL",
     "closure_paths": 31,

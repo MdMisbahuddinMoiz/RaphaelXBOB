@@ -130,9 +130,10 @@
   "note": "No item is READY from specification alone; environmental items require the actual proof environment and independent verification.",
   "m1_evidence": {
     "path": "docs/integration/phase-2c-m1/m1-evidence.json",
-    "sha256": "381d8cd25557519ca86f3f8b2beb8b827f316e12766e0935736e64f2e0a386c3",
+    "sha256": "2c44d5c6f9cec0adfd2cd2d8c31138ff5ffd89a22de294e8dc48f668b55253fd",
     "builder_argv_len": 151,
     "builder_argv_sha256": "781c36b4eef7e41ccd4bd7fe9707b4f20ce943e4cbef70bc17a78e130d3171ac",
+    "builder_argv_sha256_normalised": "d69578e1f966361d49464b2342c7c90a443df3046daa70cf6241fef24880770f",
     "bpf_sha256": "d1574a64643907e6c95ccafbfc74e7f04977781014ade214011e57994cb65242",
     "total": 25,
     "pass": 25,

@@ -28,14 +28,35 @@ AUDITED_ALLOWLIST = "8a7efc6f4d11bea59b60a9099dd88e287b8f46f300ba158befd6c922fb0
 FIXTURE_SHA = "c033fda6e893ed965de8496ad170628d33ce69817c6ad05bbb63bcb5e1010bd1"
 
 
-def _current_builder_spec():
+def _current_builder_spec(repo_root: Path | None = None):
+    """The spec the audit froze, rooted at `repo_root` (default: this checkout)."""
+    root = Path(repo_root) if repo_root is not None else REPO
+    fixture = root / "fixtures" / "c1a_proof"
     return SandboxSpec(
         provider=ProviderRef(root="/home/moiz/audit-repos/T3MP3ST",
                              node_modules="/home/moiz/audit-repos/T3MP3ST/node_modules"),
-        fixture=FixtureRef(root=str(REPO / "fixtures" / "c1a_proof"),
-                           path=str(REPO / "fixtures" / "c1a_proof" /
-                                    "raphael_c1a_fixture.txt"),
+        fixture=FixtureRef(root=str(fixture),
+                           path=str(fixture / "raphael_c1a_fixture.txt"),
                            sha256=FIXTURE_SHA))
+
+
+#: Placeholder substituted for the checkout root before hashing. The argv
+#: embeds the repository's absolute path in exactly one token, so a digest
+#: taken over the raw argv can only ever be reproduced at the one directory
+#: the audit ran in. Normalising that single prefix keeps all 150 other
+#: tokens verified byte-for-byte while making the check reproducible from
+#: any checkout.
+REPO_ROOT_TOKEN = "<REPO_ROOT>"
+
+
+def _normalised_argv(argv, repo_root: Path | None = None) -> list:
+    root = str(Path(repo_root) if repo_root is not None else REPO)
+    return [token.replace(root, REPO_ROOT_TOKEN) for token in argv]
+
+
+def _normalised_digest(argv, repo_root: Path | None = None) -> str:
+    joined = "\0".join(_normalised_argv(argv, repo_root))
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
 
 class M1Evidence(unittest.TestCase):
@@ -72,15 +93,38 @@ class M1Evidence(unittest.TestCase):
         self.assertEqual(f["seccomp_fd"], "3")
 
     def test_5_probe_argv_matches_current_builder(self):
-        """F1 regression: the frozen probe argv IS the current builder output."""
+        """F1 regression: the frozen probe argv IS the current builder output.
+
+        Compared over the checkout-normalised argv so the digest is
+        reproducible from any checkout, not only the audited directory.
+        """
         f = self.d["freeze"]
         builder = list(build_bwrap_argv(_current_builder_spec(), seccomp_fd=3))
         self.assertEqual(len(builder), 151)
         self.assertEqual(f["builder_argv_len"], len(builder))
-        recorded = hashlib.sha256("\0".join(builder).encode("utf-8")).hexdigest()
-        self.assertEqual(f["builder_argv_sha256"], recorded)
+        self.assertEqual(f["builder_argv_sha256_normalised"],
+                         _normalised_digest(builder))
         self.assertEqual(f["probe_argv_len"], len(builder) + 1)
         self.assertTrue(builder[-2].endswith("/node"))
+
+    def test_5b_normalised_digest_is_checkout_independent(self):
+        """The digest must not depend on where the repository is checked out.
+
+        Two synthetic roots must yield the same normalised digest, and the
+        RAW digest must differ — proving the normalisation is what makes it
+        portable rather than the argv being path-free to begin with.
+        """
+        digests, raws = set(), set()
+        for root in ("/synthetic/checkout-a", "/completely/different/root-b"):
+            argv = list(build_bwrap_argv(
+                _current_builder_spec(Path(root)), seccomp_fd=3))
+            self.assertEqual(len(argv), 151)
+            digests.add(_normalised_digest(argv, Path(root)))
+            raws.add(hashlib.sha256("\0".join(argv).encode()).hexdigest())
+        self.assertEqual(len(digests), 1,
+                         "normalised digest must be checkout-independent")
+        self.assertEqual(len(raws), 2,
+                         "raw digest is path-dependent; that is why we normalise")
 
     def test_6_argv_recapture_provenance(self):
         rc = self.d["freeze"]["argv_recapture"]
