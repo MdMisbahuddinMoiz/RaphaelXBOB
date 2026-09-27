@@ -99,8 +99,16 @@ Per-layer counts: `reports/FINAL_TEST_MATRIX.md`.
 - [x] **VERIFIED [historical, `a7d4d1357`]** — real MiMo V2.6 Flash vertical slice:
       governed discovery → SSH execution → evidence-driven replanning → user-to-root.
       Real, and not reproduced by this environment.
-- [ ] **NOT VERIFIED** — **Kioptrix Level 1 autonomous compromise.** Prepared as the next
-      authorised training target; not demonstrated. No claim is made.
+- [x] **VERIFIED [2026-09-27]** — **Kioptrix Level 1 — VERIFIED TARGET / GOVERNED
+      RECONNAISSANCE.** Live VulnHub VM: boot, network reachability, honest `vulnhub`
+      declaration, governed service discovery with ledger-backed evidence
+      (`127.0.0.1: 2222, 8080`), governed HTTP request executed through Broker → Policy,
+      scope/port/protocol denial behaviour verified, live run seal verified.
+- [ ] **NOT VERIFIED** — Kioptrix **autonomous compromise: NOT demonstrated. Root access:
+      NOT achieved.** Execution stops at the `ssh-no-session-spec` authorization boundary
+      (intentional; requires an explicitly declared SSH session specification, not a Policy
+      defect). The wider chain requires an exploitation capability not currently present.
+      Autonomous AI reasoning on Kioptrix: NOT demonstrated with the offline provider.
 
 ---
 
@@ -193,7 +201,8 @@ Submission-ready requires every submission-critical box above to be VERIFIED. Th
 outstanding items are:
 
 1. **Real hosted-model demonstration** — BLOCKED on a credential in this environment.
-2. **Kioptrix Level 1 demonstration** — NOT VERIFIED; next demonstration target.
+2. **Kioptrix autonomous compromise / root** — NOT VERIFIED; target and governed
+   reconnaissance are verified, compromise is not.
 3. **Judge-portal archive** — not produced.
 
 Closed this pass: **tamper-evidence on all run paths** — VERIFIED as of `beef7ef37`.

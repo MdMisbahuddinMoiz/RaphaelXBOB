@@ -276,12 +276,26 @@ Full detail: `reports/TEST_INTEGRITY_AUDIT.md` and `reports/FINAL_TEST_MATRIX.md
 - Controlled target verification: **14/14** fixture checks pass.
 - Real MiMo V2.6 Flash vertical slice at `a7d4d1357`: governed discovery, SSH
   execution, evidence-driven replanning, user-to-root progression.
+- **Kioptrix Level 1 — VERIFIED TARGET / GOVERNED RECONNAISSANCE.** A live
+  VulnHub VM: boot, network reachability, honest `vulnhub` target declaration,
+  governed service discovery with ledger-backed evidence
+  (`127.0.0.1: 2222, 8080`), a governed HTTP request executed through
+  Broker → Policy, verified scope/port/protocol denials, and a verified seal
+  on the live run.
 
-### NEXT DEMONSTRATION — not yet proven
+### NOT YET DEMONSTRATED
 
-- **Kioptrix Level 1** is prepared as the next authorized training target. Its
-  autonomous compromise has **not** been established by the current
-  submission checkpoint, and is not claimed here.
+- Kioptrix **autonomous compromise: NOT demonstrated. Root access: NOT
+  achieved.** Execution against it stops at the `ssh-no-session-spec`
+  authorization boundary — an intentional boundary requiring an explicitly
+  declared SSH session specification, not a Policy defect. The wider Kioptrix
+  chain additionally requires an exploitation capability Raphael does not
+  currently carry.
+- Autonomous AI reasoning on Kioptrix: **not demonstrated** with the current
+  offline provider, which is not an AI model.
+
+### NEXT DEMONSTRATION
+
 - A real-model browser run, which requires a hosted-model credential that is
   unavailable in the current execution environment.
 
@@ -329,9 +343,10 @@ Stated explicitly, without qualification:
    `a7d4d1357`; that is a historical validation, not something this
    environment reproduces. Every assisted-loop claim in the current browser
    checkpoint rests on the deterministic provider, which is not an AI model.
-6. **Kioptrix Level 1 is not yet demonstrated.** It is prepared as the next
-   authorized training target. No autonomous compromise of it is claimed by
-   this submission checkpoint.
+6. **Kioptrix autonomous compromise is not achieved.** The target is verified and
+   governed reconnaissance against it is proven, but the chain stops at the
+   `ssh-no-session-spec` authorization boundary and would require an
+   exploitation capability that is not in the current surface.
 
 ## 12. Demo flow — four acts
 

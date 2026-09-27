@@ -89,7 +89,8 @@ matrix is not read as "tests only".
 | Governed discovery against a real target | `network_service_discovery on 127.0.0.2` → Policy `ALLOW — ok` → execution `Completed` → evidence `127.0.0.2: 2222, 8080 (probed 2)` | **PROVEN** |
 | Transcript id durability across restart | server process restarted; next turn continued at `C-USER-000011` with no collision | **PROVEN** |
 | Real hosted-model (MiMo) mission | `a7d4d1357` vertical slice — governed discovery → SSH → evidence-driven replanning → user-to-root | **PROVEN at `a7d4d1357`; not re-run in this environment** |
-| Kioptrix Level 1 autonomous compromise | — | **NOT DEMONSTRATED** — next demonstration target |
+| **Kioptrix Level 1 — verified target / governed reconnaissance** | live VulnHub VM: boot, reachability, `vulnhub` declaration, governed discovery -> ledger evidence `127.0.0.1: 2222, 8080`, governed HTTP GET executed through Broker -> Policy, scope/port/protocol denials verified, live run seal verified | **PROVEN** |
+| Kioptrix autonomous compromise / root | — | **NOT DEMONSTRATED** — see capability boundary below |
 | Run-path chain-level sealing | all four governed run paths seal; delete/reorder of evidence invalidates; missing seal stays `missing-seal`; reproduced 4/4 failing before `beef7ef37` | **PROVEN** |
 
 ---
@@ -115,9 +116,41 @@ model.
 1. **Real-model credential unavailable** in the current execution environment. The provider
    code fails closed and names `RAPHAEL_MODEL_ENDPOINT` / `RAPHAEL_MODEL_NAME` /
    `RAPHAEL_MODEL_API_KEY`.
-2. **Kioptrix Level 1 has not been autonomously compromised** by the current checkpoint.
+2. **Kioptrix autonomous compromise has NOT been achieved.** The target itself is verified
+   (boot, reachability, declaration, governed discovery, governed HTTP). Execution stops at
+   the SSH authorization boundary, and the wider Kioptrix chain additionally requires an
+   exploitation capability Raphael does not currently carry. See the capability boundary
+   section below.
 3. **4 xfails** remain for the D17 `AutonomousLoop` reducer gap, documented in `README.md`.
 4. **1 skip** is environment-dependent (sandbox/bubblewrap-class).
+
+---
+
+## MEASURED CAPABILITY BOUNDARY — KIIOPTRIX LEVEL 1
+
+Probed through the real production stack (`BOBPolicy` -> `BOBBroker` -> `BOBRuntime` ->
+capability -> `EvidenceLedger`) against the live VM. HTTP requests hit the VM's real
+Apache; nothing was stubbed.
+
+| Step | Result |
+|------|--------|
+| Governed service discovery | ALLOW, executed |
+| Governed HTTP GET | ALLOW, executed |
+| Undeclared port / out-of-scope host | DENY — `network-target-mismatch` |
+| Undeclared protocol (Telnet) | DENY — `telnet-target-mismatch` |
+| SSH target (protocol + port declared) | **DENY — `ssh-no-session-spec`** |
+
+The SSH target **is** authorized by the `TargetProfile`. Execution stops at
+`ssh-no-session-spec`: the capability requires an explicitly declared SSH session
+specification before it will execute. This is an **intentional authorization boundary, not
+a Policy defect.**
+
+The wider Kioptrix attack chain additionally requires an exploitation capability that
+Raphael does not currently carry: `NETWORK_HTTP_REQUEST` is GET/HEAD only, with no
+arbitrary method, no target-side write, and no command execution over HTTP.
+
+No exploitation capability was added. Autonomous compromise and root access are
+**NOT demonstrated**.
 
 ---
 

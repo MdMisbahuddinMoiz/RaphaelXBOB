@@ -180,6 +180,18 @@ intact.
   removed: it now asserts a sealed run verifies, and that deleting the sidecar degrades
   honestly to `missing-seal`.
 
+### 6.5 Kioptrix capability probe — no product change
+- **Status**: no product code was modified.
+- The Kioptrix Level 1 exercise (live VulnHub VM: boot, reachability, `vulnhub` target
+  declaration, governed discovery, governed HTTP through Broker → Policy, scope/port/protocol
+  denials, live seal) was driven entirely through the public API and the production
+  `BOBPolicy` -> `BOBBroker` -> `BOBRuntime` stack. The probe script, the converted disk
+  image, and its results live under `training/`, which is git-ignored. HEAD did not move.
+- Execution against the target stops at `ssh-no-session-spec` — an intentional authorization
+  boundary requiring an explicitly declared SSH session specification, **not** a Policy
+  defect. No exploitation capability was added.
+- Autonomous compromise and root access are **NOT demonstrated**.
+
 ---
 
 ## 7. PRE-EXISTING FAILURES — **[2026-09-26] HISTORICAL, NOW RESOLVED**

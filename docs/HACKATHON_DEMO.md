@@ -18,7 +18,7 @@ transcript. The model proposes; Raphael alone authorises.
 | **PROVEN** | Governed chat console in a real browser against a real controlled target | **Reproducible today** |
 | **PROVEN (historical)** | Real MiMo V2.6 Flash vertical slice at `a7d4d1357` — governed discovery, SSH, evidence-driven replanning, user-to-root | Real, but not re-run in this environment |
 | **CURRENT OFFLINE DEMO** | `local-deterministic` provider | **NOT an AI model.** Deterministic rule table. Proves governance, not reasoning |
-| **NEXT DEMONSTRATION** | Kioptrix Level 1 | **NOT demonstrated.** Do not claim otherwise |
+| **VERIFIED TARGET** | Kioptrix Level 1 — live VulnHub VM, boot + reachability + `vulnhub` declaration + governed discovery + governed HTTP through Broker → Policy | **Proven.** Compromise and root are **NOT** achieved |
 
 Never present the deterministic run as evidence that an AI model reasoned autonomously.
 
@@ -236,8 +236,12 @@ python3 scripts/demo_export.py <run_id> demo/<name>
   a fixed rule table. It proves the governed path; it proves nothing about model reasoning.
 - **No real-model run in this environment.** A real MiMo V2.6 Flash mission was demonstrated
   at `a7d4d1357`; that is a historical validation, not something this environment reproduces.
-- **Kioptrix Level 1 is not demonstrated.** It is prepared as the next authorised training
-  target. No autonomous compromise of it is claimed.
+- **Kioptrix Level 1 is a verified target, not a compromised one.** Boot, reachability,
+  VulnHub declaration, governed discovery, governed HTTP and scope/port/protocol denials are
+  all proven. Execution stops at the `ssh-no-session-spec` authorization boundary — an
+  intentional boundary requiring an explicitly declared SSH session specification, not a
+  Policy defect. The wider chain needs an exploitation capability Raphael does not carry.
+  Autonomous compromise and root access are **NOT** claimed.
 - **No exploitation in the governed capability set.** `NETWORK_HTTP_REQUEST` is HTTP
   GET/HEAD only. Privilege escalation and arbitrary methods are outside it.
 - **Legacy substrate** under `src/` sits outside the governed runtime and is not imported by it.
