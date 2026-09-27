@@ -2,8 +2,8 @@
 
 **Repository**: `/home/moiz/raphael-2.0-rbsv2r`
 **Branch**: `hackathon/bob-assisted-raphael`
-**Current HEAD**: `beef7ef37` — *fix: seal all governed run paths*
-**Current measured state**: **2160 passed · 1 skipped · 4 xfailed · 0 failed · 297 subtests** (192.73s)
+**Current HEAD**: `becc9b830` — *test: make M1 probe evidence portable across checkouts*
+**Current measured state**: **2161 passed · 1 skipped · 4 xfailed · 0 failed · 297 subtests** (195.24s)
 **Prior audit**: 2026-09-26, at `0cbcd263f` — *1941 passed, 4 failed, 1 skipped, 4 xfailed, 236 subtests*
 
 > Measurements labelled **[2026-09-26]** are historical and describe the repository at
@@ -192,6 +192,26 @@ intact.
   defect. No exploitation capability was added.
 - Autonomous compromise and root access are **NOT demonstrated**.
 
+### 6.6 Checkout-dependent evidence digest
+- **Status**: RESOLVED — `becc9b830`
+- **Found by**: extracting the submission archive and running the suite **from the
+  extracted copy**, rather than trusting the working tree.
+- **Cause**: `tests/test_m1_probe.py::test_5_probe_argv_matches_current_builder` hashed the
+  full 151-token bwrap argv and compared it to a digest frozen into
+  `docs/integration/phase-2c-m1/m1-evidence.json`. Exactly **one** of those tokens embeds the
+  absolute checkout root, so the digest could only ever be reproduced at
+  `/home/moiz/raphael-2.0-rbsv2r`. Extracted anywhere else it failed.
+- **Impact**: the submission artefact a judge receives did not reproduce its own green suite
+  (2159/2160). Invisible from the working tree — the failure appears only on the artefact.
+- **Resolution**: the checkout root is substituted with `<REPO_ROOT>` before hashing, and the
+  normalised digest is recorded alongside the original. All 151 tokens are still verified;
+  the other 150 were never path-dependent. The original absolute digest is retained for
+  provenance rather than overwritten. The bwrap builder and sandbox behaviour are unchanged.
+- **Verification**: a new regression (`test_5b_normalised_digest_is_checkout_independent`)
+  asserts two synthetic roots produce one normalised digest and two distinct raw digests.
+  End-to-end: **2161 passed / 0 failed in the working tree, and 2161 passed / 0 failed from
+  the archive extracted to `/home/moiz/relocation-check/`** — a different path.
+
 ---
 
 ## 7. PRE-EXISTING FAILURES — **[2026-09-26] HISTORICAL, NOW RESOLVED**
@@ -223,7 +243,8 @@ reports **0 failed**.
 | Arena artifact destruction | **RESOLVED** — `9bb6d095c` |
 | Chat transcript id collision | **RESOLVED** — `6009afbc6` |
 | Acceptance suite | **HONEST** — asserts real returned state, no mocks, no skips/xfails, no tautologies |
-| Full suite | **2160 passed · 0 failed** |
+| Full suite | **2161 passed · 0 failed** |
+| Evidence portability | **RESOLVED** — `becc9b830` |
 | Run-path sealing | **RESOLVED** — `beef7ef37` |
 
 **VERDICT**: the test suite is honest and currently green. Four integrity defects and one

@@ -39,16 +39,22 @@ Status vocabulary: **VERIFIED** (physically executed on the current tree) ·
 
 ## 2. Test state
 
-- [x] **VERIFIED [2026-09-27]** — full suite: **2160 passed · 0 failed · 1 skipped ·
-      4 xfailed · 297 subtests** in 192.73s, exit 0. This is the latest verified checkpoint.
+- [x] **VERIFIED [2026-09-27]** — full suite: **2161 passed · 0 failed · 1 skipped ·
+      4 xfailed · 297 subtests** in 195.24s, exit 0. This is the latest verified checkpoint.
 - [x] **VERIFIED [2026-09-27]** — the 6 failures present at the start of this pass are
       **fixed, not reclassified**: 2 in the chat console (a `NameError` on an unwritten
       helper plus a missing parameter) and 4 environment-specific test-path failures.
-      Journey: **6 failed / 2148 passed → 0 failed / 2160 passed**.
+      Journey: **6 failed / 2148 passed → 0 failed / 2161 passed**.
 - [x] **VERIFIED [2026-09-27]** — the 4 `xfail`s are the documented D17 `AutonomousLoop`
       reducer gap, individually justifiable. The 1 skip is environment-dependent.
 - [x] **VERIFIED [2026-09-27]** — the suite leaves committed evidence intact:
       `git diff --stat -- arena/results/raw` is empty after a full run.
+
+- [x] **VERIFIED [2026-09-27]** — the submission archive reproduces the full suite from a
+      **different** directory: 2161 passed / 0 failed from
+      `/home/moiz/relocation-check/judge-build-becc9b830/repo`, not just from the source
+      checkout. This was verified by extraction and execution, not assumed. *(Previously the
+      artefact failed 1 test on extraction — see `reports/TEST_INTEGRITY_AUDIT.md` §6.6.)*
 
 ### Recorded test-count discrepancy
 
@@ -56,7 +62,7 @@ Earlier revisions of this checklist and of the README carried competing test cou
 ("209 tests, 0 failures", "1165 tests, 0 failures", "1183 entries") that did not match
 what the suite actually reported. That **test-count discrepancy** is recorded here rather
 than quietly overwritten: `README.md` now withdraws the older figures explicitly, and the
-authoritative number is the one measured at this HEAD — **2160 passed, 0 failed**. Any
+authoritative number is the one measured at this HEAD — **2161 passed, 0 failed**. Any
 figure in prose that disagrees with a measured run is to be corrected, not averaged.
 
 Per-layer counts: `reports/FINAL_TEST_MATRIX.md`.

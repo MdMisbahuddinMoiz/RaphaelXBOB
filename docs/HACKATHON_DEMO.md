@@ -271,7 +271,9 @@ That distinction is preserved here deliberately.
 2. Start the target (§1) and verify 14/14 before demoing.
 3. Start a provider (§2) and the server (§3).
 4. Run the browser sequence (§4).
-5. Full suite: `python3 -m pytest -q` → **2160 passed, 0 failed, 1 skipped, 4 xfailed,
-   297 subtests** at `beef7ef37`.
+5. Full suite: `python3 -m pytest -q` → **2161 passed, 0 failed, 1 skipped, 4 xfailed,
+   297 subtests** at `becc9b830`.
 6. After any test run, `git diff --stat -- arena/results/raw` must be empty — the suite is
    isolated from committed evidence (resolved in `9bb6d095c`).
+7. The submission archive reproduces this same result when extracted to a different
+   directory — verified, not assumed (see `reports/TEST_INTEGRITY_AUDIT.md` §6.6).

@@ -10,12 +10,12 @@
 ## FULL SUITE — CURRENT
 
 ```
-2160 passed, 1 skipped, 4 xfailed, 27 warnings, 297 subtests passed in 192.73s
+2161 passed, 1 skipped, 4 xfailed, 27 warnings, 297 subtests passed in 195.24s
 ```
 
 | Metric | Value |
 |--------|-------|
-| passed | **2160** |
+| passed | **2161** |
 | failed | **0** |
 | skipped | 1 |
 | xfailed | 4 |
@@ -36,7 +36,8 @@ The 4 xfails are the documented D17 `AutonomousLoop` reducer binding gap
 | `8df8b6f39` (chat console) — after `_latest_discovery` fix | 2150 | 4 | 1 | 4 | 295 |
 | `3150a3060` (test portability) | 2154 | 0 | 1 | 4 | 295 |
 | `6009afbc6` / `0ebb9f389` (id durability + provider admission) | **2156** | **0** | 1 | 4 | **297** |
-| `beef7ef37` (run-path sealing) — **latest verified checkpoint** | **2160** | **0** | 1 | 4 | **297** |
+| `beef7ef37` (run-path sealing) | 2160 | 0 | 1 | 4 | 297 |
+| `becc9b830` (evidence portability) — **latest verified checkpoint** | **2161** | **0** | 1 | 4 | **297** |
 
 - **6 → 0 failures.** The 2 chat failures were a `NameError` on an unwritten helper
   (`_latest_discovery`) plus a missing `config` parameter; the 4 remaining were

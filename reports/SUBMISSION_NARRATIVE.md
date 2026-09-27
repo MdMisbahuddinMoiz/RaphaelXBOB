@@ -229,8 +229,8 @@ and none is made here.
 
 ## 9. Measured evidence
 
-**Current measured test state at `beef7ef37`: 2160 passed, 0 failed, 1 skipped,
-4 xfailed, 297 subtests in 192.73s.**
+**Current measured test state at `becc9b830`: 2161 passed, 0 failed, 1 skipped,
+4 xfailed, 297 subtests in 195.24s.**
 
 Session trajectory:
 
@@ -240,7 +240,8 @@ Session trajectory:
 | `8df8b6f39` after the chat-path fix | 2150 | 4 |
 | `3150a3060` after test portability | 2154 | 0 |
 | `6009afbc6` / `0ebb9f389` | **2156** | **0** |
-| `beef7ef37` after run-path sealing — **latest verified checkpoint** | **2160** | **0** |
+| `beef7ef37` after run-path sealing | 2160 | 0 |
+| `becc9b830` after evidence portability — **latest verified checkpoint** | **2161** | **0** |
 
 The 6 starting failures were: 2 in the chat console (a `NameError` on an
 unwritten helper, `_latest_discovery`, plus a missing `config` parameter) and 4
