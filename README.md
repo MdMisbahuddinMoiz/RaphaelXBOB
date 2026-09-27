@@ -17,6 +17,17 @@ Mission → Plan A → Runtime → Broker → Policy → Evidence → Finding
 > **Raphael 2.0** — *Generic governed autonomous security-assessment agent for authorized/CTF targets.*
 > Milestones: **D13** capability fabric → **D14** autonomous planner / world-state → **D15** generic capability registry + adapter bridge → **D16** verification + replanning → **D17** adversarial hardening → **D18** final release candidate.
 > Full release documentation: [`docs/FINAL_RELEASE.md`](docs/FINAL_RELEASE.md).
+>
+> **About IBM Bob.** IBM Bob was the AI-assisted development tool used to build
+> Raphael 2.0. It contributed to implementation, debugging, test authoring, the
+> sandbox/governance layers, and network-service discovery during authorized lab
+> engagements. Bob is **not** the runtime executor: the agent that executes
+> missions is Raphael itself, driven by the Runtime → Broker → Policy boundary
+> described below. The `BOB`-prefixed names (`BOBBroker`, `BOBPolicy`,
+> `BOBRuntime`, `BOBQualityGate`) are a naming artifact of that collaboration,
+> not a claim that Bob executes anything. The shipped `raphael_ibm_bob/` package
+> contains no subprocess, socket, or HTTP callout to Bob or any Bob service.
+
 
 ---
 
@@ -151,20 +162,20 @@ RAPHAEL strictly enforces these foundational invariants across all layers:
 3. **CAPABILITY RESOLUTION != EXECUTION**: Finding a capability handler does not invoke it.
 4. **PROVIDER SUCCESS != VERIFIED FINDING**: A successful scan from a provider is UNTRUSTED evidence, never an authoritative finding.
 5. **RETEST != PROOF**: A passing named test does not prove correctness; an independent oracle falsifies false-success decoy fixes.
-6. **PROVIDER RESULT != QUALITY GATE COMPLETE**: The provider cannot declare completion. [`BOBQualityGate`](file:///home/moiz/raphael-2.0-rbsv2r/raphael_ibm_bob/quality_gate.py) is the SOLE authority permitted to emit `COMPLETE`.
+6. **PROVIDER RESULT != QUALITY GATE COMPLETE**: The provider cannot declare completion. [`BOBQualityGate`](raphael_ibm_bob/quality_gate.py) is the SOLE authority permitted to emit `COMPLETE`.
 
 ---
 
 ## Architecture & Governed Lifecycle
 
 ### 1. Mandatory Broker Mediation
-[`BOBBroker`](file:///home/moiz/raphael-2.0-rbsv2r/raphael_ibm_bob/broker.py) is the sole gateway to capability invocation (`execute_capability`). All requests from callers ([`Runtime`](file:///home/moiz/raphael-2.0-rbsv2r/raphael_ibm_bob/runtime.py), [`Planner`](file:///home/moiz/raphael-2.0-rbsv2r/raphael_ibm_bob/planner.py), [`Verifier`](file:///home/moiz/raphael-2.0-rbsv2r/raphael_ibm_bob/verifier.py), [`Falsifier`](file:///home/moiz/raphael-2.0-rbsv2r/raphael_ibm_bob/falsifier.py), [`Replanner`](file:///home/moiz/raphael-2.0-rbsv2r/raphael_ibm_bob/replanner.py)) are stamped with dense sequence numbers, validated through policy, and persisted to durable evidence.
+[`BOBBroker`](raphael_ibm_bob/broker.py) is the sole gateway to capability invocation (`execute_capability`). All requests from callers ([`Runtime`](raphael_ibm_bob/runtime.py), [`Planner`](raphael_ibm_bob/planner.py), [`Verifier`](raphael_ibm_bob/verifier.py), [`Falsifier`](raphael_ibm_bob/falsifier.py), [`Replanner`](raphael_ibm_bob/replanner.py)) are stamped with dense sequence numbers, validated through policy, and persisted to durable evidence.
 
 ### 2. Fail-Closed Policy
-[`BOBPolicy`](file:///home/moiz/raphael-2.0-rbsv2r/raphael_ibm_bob/policy.py) enforces:
+[`BOBPolicy`](raphael_ibm_bob/policy.py) enforces:
 - A capability authorization policy that is now **data-driven** (`PolicyCapabilityMetadata`); built-in entries cover `READ`, `LIST`, `SEARCH`, `WRITE`, `RUN_TEST`, `C1A_STATIC_FILE_INSPECT`, `NETWORK_HTTP_REQUEST`, and `NETWORK_TELNET_SESSION`, and further capabilities are registered as metadata rather than new code branches.
 - Strict workspace path containment (preventing traversal and path escaping).
-- Mission-scope containment via canonical path resolution in [`c1a_scope.py`](file:///home/moiz/raphael-2.0-rbsv2r/raphael_ibm_bob/c1a_scope.py).
+- Mission-scope containment via canonical path resolution in [`c1a_scope.py`](raphael_ibm_bob/c1a_scope.py).
 - Capability invariants (e.g. `RUN_TEST` only allows test files matching `test_*.py` or `*_test.py`).
 
 ### 2a. Fail-Closed RUN_TEST Sandbox
@@ -214,22 +225,22 @@ is claimed for RUN_TEST, and the boundary is not a defense against every kernel 
 IBM Bob is not part of D18.
 
 ### 3. Cryptographic Authorization Binding
-[`C1AAuthorizationBinding`](file:///home/moiz/raphael-2.0-rbsv2r/raphael_ibm_bob/c1a_authorization.py) generates single-use HMAC-SHA256 authorization tokens sealing the complete authoritative execution identity (`run_id`, `decision_seq`, `request_seq`, `invocation_id`, `proof_session_id`, `lifecycle_id`, `sandbox_id`, `capability_id`, `provider_id`, `target`, `fixture_path`). Any field mutation, replay, or foreign identity fails closed.
+[`C1AAuthorizationBinding`](raphael_ibm_bob/c1a_authorization.py) generates single-use HMAC-SHA256 authorization tokens sealing the complete authoritative execution identity (`run_id`, `decision_seq`, `request_seq`, `invocation_id`, `proof_session_id`, `lifecycle_id`, `sandbox_id`, `capability_id`, `provider_id`, `target`, `fixture_path`). Any field mutation, replay, or foreign identity fails closed.
 
 ### 4. Append-Only Evidence Ledger
-[`EvidenceLedger`](file:///home/moiz/raphael-2.0-rbsv2r/raphael_ibm_bob/evidence_ledger.py) records immutable JSONL records with SHA-256 digests. Causal ordering is strictly preserved:
+[`EvidenceLedger`](raphael_ibm_bob/evidence_ledger.py) records immutable JSONL records with SHA-256 digests. Causal ordering is strictly preserved:
 `RequestRecord` $\rightarrow$ `DecisionRecord` $\rightarrow$ `PolicyEvidenceReceipt` $\rightarrow$ `ResultRecord` $\rightarrow$ `ExecutionEvidenceReceipt`.
 
 ### 5. Verification vs. Falsification
-- **Verification** ([`Verifier`](file:///home/moiz/raphael-2.0-rbsv2r/raphael_ibm_bob/verifier.py)): Retests candidate findings against named test fixtures.
-- **Falsification** ([`Falsifier`](file:///home/moiz/raphael-2.0-rbsv2r/raphael_ibm_bob/falsifier.py)): Actively searches for counter-examples using independent behavior probes (external oracles). When a counter-example is observed, the finding transitions to `REFUTED`.
-- **Finding Store** ([`FindingStore`](file:///home/moiz/raphael-2.0-rbsv2r/raphael_ibm_bob/finding.py)): Enforces valid lifecycle transitions: `UNVERIFIED` $\rightarrow$ `REFUTED` $\rightarrow$ `SUPERSEDED` / `VERIFIED`. Direct transitions from `UNVERIFIED` to `SUPERSEDED` are rejected.
+- **Verification** ([`Verifier`](raphael_ibm_bob/verifier.py)): Retests candidate findings against named test fixtures.
+- **Falsification** ([`Falsifier`](raphael_ibm_bob/falsifier.py)): Actively searches for counter-examples using independent behavior probes (external oracles). When a counter-example is observed, the finding transitions to `REFUTED`.
+- **Finding Store** ([`FindingStore`](raphael_ibm_bob/finding.py)): Enforces valid lifecycle transitions: `UNVERIFIED` $\rightarrow$ `REFUTED` $\rightarrow$ `SUPERSEDED` / `VERIFIED`. Direct transitions from `UNVERIFIED` to `SUPERSEDED` are rejected.
 
 ### 6. Replanning from Refuted Claims
-[`Replanner`](file:///home/moiz/raphael-2.0-rbsv2r/raphael_ibm_bob/replanner.py) consumes refutation evidence and counter-example receipts from the ledger, rejects decoy targets, and derives Plan B targeting the root defect.
+[`Replanner`](raphael_ibm_bob/replanner.py) consumes refutation evidence and counter-example receipts from the ledger, rejects decoy targets, and derives Plan B targeting the root defect.
 
 ### 7. Output Quality Gate
-[`BOBQualityGate`](file:///home/moiz/raphael-2.0-rbsv2r/raphael_ibm_bob/quality_gate.py) independently evaluates 7 strict conditions from the ledger before declaring `COMPLETE`:
+[`BOBQualityGate`](raphael_ibm_bob/quality_gate.py) independently evaluates 7 strict conditions from the ledger before declaring `COMPLETE`:
 - **A (Mission criterion)**: Non-empty mission criteria.
 - **B (Required tests)**: Required test pass backed by an artifact proving `returncode == 0`.
 - **C (Regression breadth)**: Full regression backed by $\ge 2$ distinct allowed capability actions.
@@ -247,9 +258,9 @@ IBM Bob is not part of D18.
 - **Real T3MP3ST Provider**: Executed via the canonical path:
   `RAPHAEL -> bwrap -> RAPHAEL bridge -> binarySinkScanTool.handler()`
 - **Bubblewrap Sandbox**: Enforces `--unshare-net` (network denial) and read-only mounts (`--ro-bind`); the sandbox also carries a locally built seccomp filter (`--seccomp`). Remote-kernel seccomp BPF attachment is **not demonstrated** (see Honest Limitations).
-- **RAPHAEL-Owned Bridge** ([`provider/t3mp3st_bridge.js`](file:///home/moiz/raphael-2.0-rbsv2r/provider/t3mp3st_bridge.js)): Pinned by SHA-256 digest (`ea5616e...`). The bridge excludes raw authority findings (`severity`, `cwe`, `title`, `details`) from output receipts.
+- **RAPHAEL-Owned Bridge** ([`provider/t3mp3st_bridge.js`](provider/t3mp3st_bridge.js)): Pinned by SHA-256 digest (`ea5616e...`). The bridge excludes raw authority findings (`severity`, `cwe`, `title`, `details`) from output receipts.
 - **Untrusted Evidence**: Provider receipts are recorded with `provider_untrusted: True`. Provider output can never assert `VERIFIED`, `REFUTED`, or `COMPLETE`.
-- **Inert Provider Double**: [`InertProviderDouble`](file:///home/moiz/raphael-2.0-rbsv2r/raphael_ibm_bob/adapters/t3mp3st_adapter.py) serves as a standalone local test double when external provider checkouts are absent.
+- **Inert Provider Double**: [`InertProviderDouble`](raphael_ibm_bob/adapters/t3mp3st_adapter.py) serves as a standalone local test double when external provider checkouts are absent.
 
 ---
 
@@ -260,12 +271,12 @@ as the tree moves, so each number below cites the exact command that
 produced it. Product-suite results are reported separately from repo-wide
 status.
 
-- **Repo-wide discovery (0 product failures)**: `python3 -m unittest discover -s tests -p "test_*.py"` reports **Ran 1572 tests: 0 failures, 18 errors, 1 skipped, 4 expected failures**. All 18 errors are pre-existing collection/import errors from legacy-substrate imports (`arena.*`, `orchestrator`) and one missing optional test dependency (`pytest`), outside the governed product path.
+- **Repo-wide discovery (0 failures)**: `PYTHONPATH=. python3 -m unittest discover -s tests -p "test_*.py"` reports **Ran 1963 tests: OK (skipped=1, expected failures=4)** — 0 failures, 0 errors. The full pytest run (`python3 -m pytest tests -q`) reports **2197 passed, 1 skipped, 4 xfailed, 300 subtests passed**, also 0 failures. An earlier measurement reporting "Ran 1572 tests: 0 failures, 18 errors" is stale: those collection/import errors (legacy-substrate `arena.*` / `orchestrator` imports, plus a missing optional `pytest` dependency) no longer reproduce, and that claim is withdrawn in favor of the numbers above.
 - **Core Seam & Gov-Loop Suite (12 modules, passing)**: `PYTHONPATH=. python3 -m unittest tests.test_seam_contracts tests.test_m2_boundary tests.test_m3_evidence tests.test_m4_verifier_falsifier tests.test_m5_replanner_runner tests.test_m6_quality_gate tests.test_m7_hero tests.test_m8_planner tests.test_m9_multi_replan tests.test_m10_1_runs tests.test_m10_2_metrics tests.test_m10_3_benchmark` reports **Ran 210 tests: OK**.
 - **C1A Provider & Authorization Suite (13 modules, passing at measure time)**: `PYTHONPATH=. python3 -m unittest tests.test_c1a_authorization tests.test_c1a_end_to_end tests.test_c1a_evidence tests.test_c1a_falsification tests.test_c1a_gate tests.test_c1a_identity tests.test_c1a_launcher_contract tests.test_c1a_lifecycle tests.test_c1a_receipt tests.test_c1a_replay tests.test_c1a_security_invariants tests.test_c1a_timeout tests.test_c1a_transport` reports **Ran 109 tests: OK**. (The older "95 tests" claim is stale; including `tests.test_c1a_verification` as a 14th module gives Ran 114: OK.)
 - **T3MP3ST Integration Suite (passing at measure time)**: `PYTHONPATH=. python3 -m unittest tests.test_t3mp3st_integration` reports **Ran 30 tests: OK** (including real sandboxed provider execution).
 - **Isolation Substrate module (passing at measure time)**: `PYTHONPATH=. python3 -m unittest tests.test_isolation_substrate` reports **Ran 32 tests: OK** (`tests.test_isolation_probes` separately reports Ran 16: OK). The older "144 tests" claim is stale and is withdrawn.
-- **Repo scale (measure time)**: `git ls-files | wc -l` reports **67394** tracked files; `git ls-files 'raphael_ibm_bob/*.py' | wc -l` reports **93** product modules on disk-tracked set (plus untracked new product files); `git ls-files 'tests/*.py' | wc -l` reports **111** tracked test modules (117 `tests/test_*.py` files on disk, i.e. tracked plus new untracked). The older "80 modules / 1165 tests / 1183 entries" claims are stale and are withdrawn in favor of the numbers above.
+- **Repo scale (measure time)**: `git ls-files | wc -l` reports **15484** tracked files; `git ls-files 'raphael_ibm_bob/*.py' | wc -l` reports **122** product modules on the disk-tracked set; `git ls-files 'tests/*.py' | wc -l` reports **156** tracked test modules (149 `tests/test_*.py` files on disk). Generated arena run output (`arena/results/raw/`, ~1.6 GB across ~8k run directories) is excluded from version control as reproducible runtime evidence, matching the `runs/*` policy. The older "80 modules / 1165 tests / 1183 entries" and "67394 tracked files / 93 modules / 111 tests" claims are stale and are withdrawn in favor of the numbers above.
 - **Canonical Demo (`./scripts/run_demo.sh`)**: Exits 0, `Gate: COMPLETE` (demands real sandboxed provider).
 - **Refusal Mode (`./scripts/run_demo.sh --refuse`)**: Exits 1, `Gate: REFUSE`.
 - **Mock Mode (`./scripts/run_demo.sh --mock`)**: Exits 0, `Gate: COMPLETE` (explicit inert test double).
@@ -303,7 +314,7 @@ runs/              Durable per-run evidence ledgers (git-ignored)
 
 ## Honest Limitations
 
-1. **Live Proof Gate (Live proof is BLOCKED)**: In accordance with Controlled Release requirements, `LIVE_PROOF_AUTHORIZED = False` in [`scripts/c1a_live_proof.py`](file:///home/moiz/raphael-2.0-rbsv2r/scripts/c1a_live_proof.py). While real T3MP3ST executes locally in the bubblewrap sandbox (`provider_execution = VERIFIED`), formal remote M1/M2/M5 closure is marked **NOT VERIFIED** (seccomp `NOT_EXECUTED`).
+1. **Live Proof Gate (Live proof is BLOCKED)**: In accordance with Controlled Release requirements, `LIVE_PROOF_AUTHORIZED = False` in [`scripts/c1a_live_proof.py`](scripts/c1a_live_proof.py). While real T3MP3ST executes locally in the bubblewrap sandbox (`provider_execution = VERIFIED`), formal remote M1/M2/M5 closure is marked **NOT VERIFIED** (seccomp `NOT_EXECUTED`).
 2. **Benchmark Scope**: Evaluated on the canonical deterministic `authkit` scenario; multi-repo generalization is not claimed.
 3. **Legacy Substrate**: The repository checkout contains earlier offensive research platform files in `src/` (plus `arena/`, `cli/`, `evaluations/`, etc.). They are NOT imported by the governed IBM BOB runtime, and they are NOT shipped: the wheel/sdist include ONLY `raphael_ibm_bob` (`pyproject.toml` packaging include). Isolation beyond that (no broader runtime or distribution claim) is not demonstrated here.
 4. **D5-7 Controlled VulnHub E2E (BLOCKED / OUT OF SCOPE FOR THIS RELEASE)**: no supported controlled VulnHub target/environment is present in this checkout or host. Legacy Stapler (VulnHub) material under `evaluations/campaign/` and `current-state/reports/` is historical evidence from a different lab host; the VM image and lab bridge (`icabr0`, `10.66.0.0/24`) are unavailable here, and the governed runtime has no network target adapter. No VulnHub execution, VM availability, reachable target IP, or kill chain is claimed.

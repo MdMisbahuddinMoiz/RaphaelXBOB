@@ -18,9 +18,12 @@ Status vocabulary: **VERIFIED** (physically executed on the current tree) ·
 
 ## 1. Repository state
 
-- [x] **VERIFIED [2026-09-27]** — working tree has **zero modified tracked files**.
-      `git diff --stat` is empty. Every remaining `git status --short` entry is `??`
-      (untracked) and is deliberately excluded from the product history: audit scratch
+- [x] **VERIFIED [2026-09-27]** — publication pass to `RaphaelXBOB` deliberately modifies three
+      tracked files: `.gitignore` (excludes generated `arena/results/raw/`), `README.md`, and
+      `CANONICAL_DEMO.md` (repo-relative link repair + accurate IBM Bob framing). No functional
+      code, test, or governance file was changed.
+- [x] **VERIFIED [2026-09-27]** — every remaining `git status --short` entry is `??` (untracked)
+      and remains deliberately excluded from the published history: audit scratch
       (`AUDIT_AGENT_*.md`, `FINAL_RAPHAEL_READINESS_AUDIT.md`, `raphael_current.md`),
       scratch output (`*_output.txt`, `r1.sh`), scratch scripts (`audit_*.py`,
       `verify_security.py`, `reports/_*.py`), and `training/` (Kioptrix demo material).
@@ -30,7 +33,9 @@ Status vocabulary: **VERIFIED** (physically executed on the current tree) ·
 - [x] **VERIFIED [2026-09]** — no generated artifacts committed: `runs/*` (except tracked
       `runs/.gitkeep`), `metrics.json`, `sessions/` are git-ignored and absent from
       `git ls-files`. Re-confirmed [2026-09-27]: `git ls-files runs/` returns only
-      `runs/.gitkeep`.
+      `runs/.gitkeep`. The same policy now also covers `arena/results/raw/` (~1.6 GB of
+      generated per-run episode streams), which is git-ignored and untracked; the files
+      remain on local disk.
 - [x] **VERIFIED [2026-09]** — no credentials committed.
 - [ ] **NOT VERIFIED** — a judge-portal archive has not been produced. No archive is
       created by this pass.
@@ -39,8 +44,10 @@ Status vocabulary: **VERIFIED** (physically executed on the current tree) ·
 
 ## 2. Test state
 
-- [x] **VERIFIED [2026-09-27]** — full suite: **2161 passed · 0 failed · 1 skipped ·
-      4 xfailed · 297 subtests** in 195.24s, exit 0. This is the latest verified checkpoint.
+- [x] **VERIFIED [2026-09-27]** — full pytest suite: **2197 passed · 0 failed · 1 skipped ·
+      4 xfailed · 300 subtests** in 194.41s, exit 0. The documented
+      `python3 -m unittest discover -s tests -p "test_*.py"` reports
+      **Ran 1963 tests: OK (skipped=1, expected failures=4)** — 0 failures, 0 errors.
 - [x] **VERIFIED [2026-09-27]** — the 6 failures present at the start of this pass are
       **fixed, not reclassified**: 2 in the chat console (a `NameError` on an unwritten
       helper plus a missing parameter) and 4 environment-specific test-path failures.
