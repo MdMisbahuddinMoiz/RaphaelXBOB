@@ -25,8 +25,10 @@ Run: python -m pytest tests/test_prompted_agent_repair.py -q
 """
 
 import sys
+from pathlib import Path
 
-sys.path.insert(0, '/home/yaser/raphael-2.0-rbsv2r/src')
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "src"))
 
 import pytest
 from types import SimpleNamespace

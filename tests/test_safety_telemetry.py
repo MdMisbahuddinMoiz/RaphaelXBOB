@@ -12,10 +12,12 @@ Run: python -m pytest tests/test_safety_telemetry.py -q
 """
 
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-sys.path.insert(0, '/home/yaser/raphael-2.0-rbsv2r/src')
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from arena.ablation import SafetyVerifier
 from arena.metrics import Outcome, RunMetrics

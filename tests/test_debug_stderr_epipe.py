@@ -19,14 +19,16 @@ Tests:
                                         helper returns without raising.
   test_debug_non_epipe_oserror_is_not_hidden -> errno != EPIPE must surface.
 
-Run: /home/yaser/raphael-2.0/.venv/bin/python -m pytest tests/test_debug_stderr_epipe.py -q
+Run: python3 -m pytest tests/test_debug_stderr_epipe.py -q   (from the repository root)
 """
 
 import errno
 import io
 import sys
+from pathlib import Path
 
-sys.path.insert(0, '/home/yaser/raphael-2.0-rbsv2r/src')
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from arena.ablation_runner import _safe_debug_stderr
 

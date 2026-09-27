@@ -19,8 +19,9 @@ Run: python -m pytest tests/test_repair_gate.py -q
 """
 
 import sys
-
-sys.path.insert(0, '/home/yaser/raphael-2.0-rbsv2r/src')
+from pathlib import Path
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "src"))
 import pytest
 
 

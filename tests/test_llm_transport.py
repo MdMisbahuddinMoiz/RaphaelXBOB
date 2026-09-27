@@ -24,8 +24,10 @@ Run: python -m pytest tests/test_llm_transport.py -q
 import json
 import os
 import sys
+from pathlib import Path
 
-sys.path.insert(0, '/home/yaser/raphael-2.0-rbsv2r/src')
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "src"))
 
 import arena.llm_transport as t
 from arena.llm_service import (

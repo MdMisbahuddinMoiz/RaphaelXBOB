@@ -6,10 +6,12 @@ Tests are ordered: if any earlier test fails, stop and report.
 
 import copy
 import sys
+from pathlib import Path
 import time
 import uuid
 
-sys.path.insert(0, '/home/yaser/raphael-2.0')
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from arena.defeater import (
     DefeaterGenerator, DefeaterEvaluator, DefeaterResult,
