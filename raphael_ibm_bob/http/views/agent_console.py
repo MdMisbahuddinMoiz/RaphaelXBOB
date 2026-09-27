@@ -34,6 +34,7 @@ from typing import Any, Dict, List, Optional
 from raphael_ibm_bob.harness import api
 from raphael_ibm_bob.http.views import agent_chat as ac
 from raphael_ibm_bob.http.views import decision_trace as dt
+from raphael_ibm_bob.target_profile import PLATFORM_SPECS
 
 HTML = "text/html; charset=utf-8"
 
@@ -171,6 +172,24 @@ def _key_input(state: Dict[str, Any]) -> str:
             'autocomplete="off">'
             f'<span class="fieldstat">current: {dt._e(key_state)}</span>'
             '</label>')
+
+
+def _platform_select(selected: str) -> str:
+    """Target platform selector, sourced from the canonical registry.
+
+    The option list is derived from `target_profile.PLATFORM_SPECS`, so
+    the UI cannot drift from what the backend will accept. The operator's
+    choice is authoritative input: nothing here infers a platform from a
+    hostname or address, and normal `TargetProfile` validation still runs
+    after submission.
+    """
+    chosen = (selected or "").strip().lower()
+    options = []
+    for spec in PLATFORM_SPECS:
+        mark = " selected" if spec.name == chosen else ""
+        options.append(f'<option value="{dt._e(spec.name)}"{mark}>'
+                       f'{dt._e(spec.name.upper())}</option>')
+    return "".join(options)
 
 
 def _provider_form(provider_state: Dict[str, Any],
@@ -447,7 +466,9 @@ def render(run_id: str = "",
       <label>AUTHORIZATION REF<input name="authorization_ref" required
         value="{dt._e((target or {}).get('authorization_ref', 'local-lab'))}"
         autocomplete="off"></label>
-      <input type="hidden" name="platform" value="htb">
+      <label>PLATFORM<select name="platform">
+        {_platform_select((target or {}).get('platform', 'htb'))}
+      </select></label>
       <input type="hidden" name="environment" value="isolated-lab">
       <label>WORKSPACE ROOT<input name="workspace_root"
         value="{dt._e(state.get('workspace_root', ''))}"
@@ -488,7 +509,9 @@ def render(run_id: str = "",
         autocomplete="off"></label>
       <label>MAX TURNS<input name="max_turns" type="number" min="1" max="50"
         value="{dt._e(state.get('max_turns', 6))}"></label>
-      <input type="hidden" name="platform" value="htb">
+      <label>PLATFORM<select name="platform">
+        {_platform_select((target or {}).get('platform', 'htb'))}
+      </select></label>
       <input type="hidden" name="environment" value="isolated-lab">
       <input type="hidden" name="workspace_root"
         value="{dt._e(state.get('workspace_root', ''))}">
