@@ -49,6 +49,16 @@ from orchestrator.brain.world import WorldModel
 from orchestrator.brain.hypothesis import HypothesisManager
 from orchestrator.brain.contradiction import ContradictionManager
 
+@pytest.fixture(autouse=True)
+def _isolate_arena_results(monkeypatch, tmp_path):
+    """Keep this module's arena run artifacts out of the repository.
+
+    AblationRunner writes episodes into the CWD-relative RESULTS_BASE
+    (src/arena/ablation_runner.py:157) and run_id is deterministic, so an
+    unisolated run overwrites the committed cells under arena/results/raw.
+    """
+    monkeypatch.chdir(tmp_path)
+
 # Register D-6 scenario evaluators (same as campaign runners) so _evaluate()
 # scores template scenarios with the architecture-blind structural evaluator.
 _GLOBAL_EVALUATORS.update(D6_SCENARIO_EVALUATORS)

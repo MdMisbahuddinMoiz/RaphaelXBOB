@@ -18,9 +18,22 @@ import re
 import sys
 
 sys.path.insert(0, '/home/yaser/raphael-2.0-rbsv2r/src')
+import pytest
+
 
 from arena.ablation import ABLATION_PRESETS
 from arena.ablation_runner import AblationRunner, ensure_run_dir
+
+@pytest.fixture(autouse=True)
+def _isolate_arena_results(monkeypatch, tmp_path):
+    """Keep this module's arena run artifacts out of the repository.
+
+    AblationRunner and ensure_run_dir both resolve against the CWD-relative
+    RESULTS_BASE (src/arena/ablation_runner.py:157) and run_id is
+    deterministic, so an unisolated run overwrites the committed cells under
+    arena/results/raw.
+    """
+    monkeypatch.chdir(tmp_path)
 
 
 class _FakeTemplate:

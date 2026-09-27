@@ -31,6 +31,8 @@ import sys
 sys.path.insert(0, '/home/yaser/raphael-2.0-rbsv2r/src')
 
 from unittest import mock
+import pytest
+
 
 from arena.ablation import ABLATION_PRESETS
 from arena.ablation_runner import AblationRunner
@@ -39,6 +41,16 @@ from orchestrator.brain.capability_broker import CapabilityBroker
 from orchestrator.hardening.action_receipt import (
     create_proposal, authorize, deny,
 )
+
+@pytest.fixture(autouse=True)
+def _isolate_arena_results(monkeypatch, tmp_path):
+    """Keep this module's arena run artifacts out of the repository.
+
+    AblationRunner writes episodes into the CWD-relative RESULTS_BASE
+    (src/arena/ablation_runner.py:157) and run_id is deterministic, so an
+    unisolated run overwrites the committed cells under arena/results/raw.
+    """
+    monkeypatch.chdir(tmp_path)
 
 
 class _Tpl:
