@@ -502,7 +502,7 @@ def render(run_id: str = "",
 {ac.chat_panel(mission_id=mission_id, messages=chat_messages or [],
                stopped=chat_stopped, provider_state=state,
                stopped_reason=chat_stopped_reason)}
-{ac.evidence_panel(timeline, gate)}
+{ac.evidence_panel(timeline, gate, chat_messages=chat_messages)}
 </div>
 <section class="panel" style="margin-top:14px">
   <div class="sublabel">GOVERNED LOOP &middot; TIMELINE</div>

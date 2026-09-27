@@ -202,21 +202,21 @@ def message_block(message: Dict[str, Any]) -> str:
                        or "").lower()
         if decision in ("deny", "denied"):
             css = "msg-policy deny"
-    action_id = str(message.get("action_id") or "")
     evidence_ids = list(message.get("evidence_ids") or ())
     turn_index = message.get("turn_index")
+    chat_turn = message.get("chat_turn")
     meta: List[str] = []
+    if chat_turn is not None:
+        meta.append(f"chat turn {chat_turn}")
     if turn_index is not None:
-        meta.append(f"turn {turn_index}")
-    if action_id:
-        meta.append(action_id)
+        meta.append(f"run turn {turn_index}")
     if evidence_ids:
         meta.append("evidence " + ", ".join(str(e) for e in evidence_ids))
     return f"""
     <div class="msg {css}" data-message-type="{_e(mtype)}">
       <div class="mhead"><span class="mrole">{_e(label)}</span></div>
       <div class="mbody">{_e(message.get('content', ''))}</div>
-      {f'<div class="mev">{_e(" &middot; ".join(meta))}</div>' if meta else ''}
+      {f'<div class="mev">{_e(" · ".join(meta))}</div>' if meta else ''}
     </div>"""
 
 
@@ -254,6 +254,92 @@ def _action_card(detail: Dict[str, Any]) -> str:
          f'{_e(rationale)}</p>' if rationale else ''}
       </div>
     </details>"""
+
+
+def chat_turn_numbers(messages: Iterable[Dict[str, Any]]) -> List[Optional[int]]:
+    """Conversation-level turn number for each transcript entry.
+
+    The runtime's own turn counter is per-RUN, and every `/agent/message`
+    starts a fresh model run, so it is honestly `turn 0` on every card. That
+    is accurate but reads as a bug and, worse, misrepresents the governed
+    loop's actual progress across a conversation.
+
+    This derives a presentation-only counter from the durable transcript
+    order: each operator message opens the next chat turn, and every entry
+    after it belongs to that turn until the next operator message. It is
+    derived, never invented, and the underlying per-run turn field is left
+    untouched.
+    """
+    out: List[Optional[int]] = []
+    turn = 0
+    for message in messages:
+        if str(message.get("message_type") or "") == chat_state.TYPE_USER:
+            turn += 1
+        out.append(turn or None)
+    return out
+
+
+def _chat_services(messages: Iterable[Dict[str, Any]]
+                   ) -> List[Dict[str, Any]]:
+    """Open ports reported across the whole chat session.
+
+    Read from the transcript's own evidence entries, which carry the
+    ledger record recorded when that turn executed. Nothing is merged,
+    rewritten or synthesised: a port already seen is not repeated, and the
+    evidence ids shown alongside it are the ones the ledger produced.
+    """
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    for message in messages:
+        if str(message.get("message_type") or "") != chat_state.TYPE_EVIDENCE:
+            continue
+        detail = message.get("detail") or {}
+        host = detail.get("host")
+        ports = detail.get("open_ports")
+        if not host or not isinstance(ports, (list, tuple)):
+            continue
+        for port in ports:
+            if port in seen:
+                continue
+            seen.add(port)
+            out.append({"port": port, "service": "", "state": "open",
+                        "host": host})
+    return out
+
+
+def _chat_actions(messages: Iterable[Dict[str, Any]]
+                  ) -> List[Dict[str, Any]]:
+    """Governed actions across the chat session, policy decision included.
+
+    Paired by transcript ORDER, not by evidence id: the log records the
+    policy entry without repeating the action's evidence ids, so an
+    id-based join silently never matches and every decision would render
+    as pending. Within a chat turn the sequence is action -> policy ->
+    execution -> evidence, so the next policy belongs to the open action.
+    """
+    out: List[Dict[str, Any]] = []
+    open_row: Optional[Dict[str, Any]] = None
+    for message in messages:
+        mtype = str(message.get("message_type") or "")
+        if mtype == chat_state.TYPE_ACTION:
+            detail = message.get("detail") or {}
+            open_row = {
+                "capability": detail.get("capability") or "action",
+                "target": detail.get("target") or "",
+                "decision": "pending", "reason": "",
+                "evidence_ids": [str(i) for i in
+                                 (message.get("evidence_ids") or ())],
+            }
+            out.append(open_row)
+        elif mtype == chat_state.TYPE_POLICY and open_row is not None:
+            detail = message.get("detail") or {}
+            open_row["decision"] = detail.get("decision") or "n/a"
+            open_row["reason"] = detail.get("reason") or ""
+            if not open_row["evidence_ids"]:
+                open_row["evidence_ids"] = [
+                    str(i) for i in (message.get("evidence_ids") or ())]
+            open_row = None
+    return out
 
 
 def _services(timeline: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -298,16 +384,26 @@ def _actions(timeline: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
         })
     return out
 
-
 def evidence_panel(timeline: Optional[Dict[str, Any]],
-                   gate: Optional[Dict[str, Any]] = None) -> str:
+                   gate: Optional[Dict[str, Any]] = None,
+                   chat_messages: Optional[Iterable[Dict[str, Any]]] = None
+                   ) -> str:
     """Right column: what the agent actually established.
 
-    Every row is read from the persisted governed-loop projection. Nothing
-    is synthesised for appearance; an empty section says so.
+    Aggregated over the whole chat MISSION, not just the most recent
+    per-message run. Every `/agent/message` starts a fresh model run, so
+    reading only the latest one showed "No discovery evidence yet" beside a
+    transcript full of evidence — a visible contradiction. When a chat
+    transcript is supplied it is the source; the run timeline remains the
+    fallback for the non-chat start path.
+
+    Every row is read from persisted data. Nothing is merged, rewritten or
+    synthesised for appearance; evidence ids are the ledger's own, a port
+    already seen is not repeated, and an empty section still says so.
     """
-    services = _services(timeline)
-    actions = _actions(timeline)
+    chat = list(chat_messages or ())
+    services = _chat_services(chat) or _services(timeline)
+    actions = _chat_actions(chat) or _actions(timeline)
     denied = [a for a in actions
               if str(a.get("decision", "")).lower() in ("deny", "denied")]
     verdict = str((gate or {}).get("verdict") or "")
@@ -383,6 +479,11 @@ def chat_panel(*, mission_id: str, messages: Iterable[Dict[str, Any]],
     ActionRequest that Broker and Policy may refuse.
     """
     entries = list(messages)
+    # Presentation-only conversation counter. The per-run turn the runtime
+    # records is left exactly as it is; this just makes progress across a
+    # conversation legible instead of repeating "turn 0" on every card.
+    for entry, number in zip(entries, chat_turn_numbers(entries)):
+        entry["chat_turn"] = number
     blocks = "".join(message_block(m) for m in entries)
     if not blocks:
         blocks = ('<p class="hint">No messages yet. Describe what you want '

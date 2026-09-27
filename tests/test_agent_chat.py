@@ -519,5 +519,141 @@ class PersistenceTests(_Base):
                          ["good", "also good"])
 
 
+# ---------------------------------------------------------------------------
+# N. Presentation consistency: mission-level panel + conversation-level turns
+# ---------------------------------------------------------------------------
+
+def _cycle(turn_evidence, *, ports=(2222, 8080), host="127.0.0.1"):
+    """One governed turn as the chat log records it."""
+    ids = [f"P-{turn_evidence}", f"DX-{turn_evidence}"]
+    return [
+        {"message_type": "user", "role": "operator",
+         "content": "recon", "turn_index": None, "evidence_ids": []},
+        {"message_type": "action", "role": "agent",
+         "content": "network_service_discovery on 127.0.0.1", "turn_index": 0,
+         "evidence_ids": ids,
+         "detail": {"capability": "network_service_discovery",
+                    "target": host}},
+        # The real log records the policy entry WITHOUT repeating the
+        # action's evidence ids. The panel must not depend on them.
+        {"message_type": "policy", "role": "agent", "content": "ALLOW — ok",
+         "turn_index": 0, "evidence_ids": [],
+         "detail": {"decision": "allow", "reason": "ok"}},
+        {"message_type": "evidence", "role": "agent",
+         "content": f"{host}: {', '.join(str(p) for p in ports)} (probed 2)",
+         "turn_index": 0, "evidence_ids": ids,
+         "detail": {"host": host, "open_ports": list(ports),
+                    "ports_probed": 2, "capped": False}},
+    ]
+
+
+class MissionPanelTests(unittest.TestCase):
+    """The right panel aggregates the MISSION, not the latest run only."""
+
+    def test_services_come_from_earlier_chat_turns(self):
+        """A later empty run must not blank a populated transcript."""
+        messages = _cycle("aaa") + _cycle("bbb")
+        html = ac.evidence_panel(None, None, chat_messages=messages)
+        self.assertIn("2222", html)
+        self.assertIn("8080", html)
+        self.assertNotIn("No discovery evidence yet", html)
+
+    def test_evidence_ids_are_the_ledgers_own(self):
+        messages = _cycle("aaa")
+        html = ac.evidence_panel(None, None, chat_messages=messages)
+        self.assertIn("P-aaa", html)
+        self.assertIn("DX-aaa", html)
+
+    def test_no_duplicate_services_across_turns(self):
+        """The same port rediscovered is one row, not one per turn."""
+        messages = _cycle("aaa") + _cycle("bbb")
+        html = ac.evidence_panel(None, None, chat_messages=messages)
+        self.assertEqual(html.count("2222/tcp"), 1)
+        self.assertEqual(html.count("8080/tcp"), 1)
+
+    def test_actions_carry_their_policy_decision(self):
+        messages = _cycle("aaa")
+        html = ac.evidence_panel(None, None, chat_messages=messages)
+        self.assertIn("network_service_discovery", html)
+        self.assertIn("ALLOW", html.upper())
+
+    def test_empty_chat_still_reports_empty(self):
+        """No evidence means the panel says so — never a placeholder."""
+        html = ac.evidence_panel(None, None, chat_messages=[])
+        self.assertIn("No discovery evidence yet", html)
+        self.assertIn("No governed actions yet", html)
+
+    def test_run_timeline_remains_the_fallback(self):
+        """The non-chat start path still renders from its own timeline."""
+        timeline = {"turns": [{"index": 0,
+                               "proposal": {"capability": "c", "target": "t"},
+                               "policy": {"decision": "allow", "reason": "ok"},
+                               "execution": {"executed": True},
+                               "evidence": {"evidence_ids": ["E-1"]}}]}
+        html = ac.evidence_panel(timeline, None, chat_messages=[])
+        self.assertIn("E-1", html)
+
+
+class ChatTurnNumberTests(unittest.TestCase):
+    """Conversation-level numbering, derived — never invented."""
+
+    def test_turns_increase_across_operator_messages(self):
+        messages = _cycle("aaa") + _cycle("bbb") + _cycle("ccc")
+        numbers = ac.chat_turn_numbers(messages)
+        self.assertEqual(numbers, [1] * 4 + [2] * 4 + [3] * 4)
+
+    def test_runtime_turn_field_is_untouched(self):
+        """Presentation numbering must not rewrite what the run recorded."""
+        messages = _cycle("aaa") + _cycle("bbb")
+        before = [m["turn_index"] for m in messages]
+        ac.chat_turn_numbers(messages)
+        self.assertEqual([m["turn_index"] for m in messages], before)
+        self.assertEqual(before, [None, 0, 0, 0, None, 0, 0, 0])
+
+    def test_no_numbering_before_the_first_operator_message(self):
+        self.assertEqual(ac.chat_turn_numbers([]), [])
+        self.assertEqual(
+            ac.chat_turn_numbers([{"message_type": "system"}]), [None])
+
+    def test_rendered_card_shows_chat_turn_and_run_turn(self):
+        html = ac.message_block({"message_type": "action",
+                                 "content": "x", "turn_index": 0,
+                                 "chat_turn": 2, "evidence_ids": []})
+        self.assertIn("chat turn 2", html)
+        self.assertIn("run turn 0", html)
+
+    def test_meta_separator_is_a_character_not_an_escaped_entity(self):
+        """The separator must render as "·", never the text "&middot;".
+
+        Escaping an HTML entity inside an already-escaped string makes the
+        entity visible on screen, which reads as a rendering fault.
+        """
+        html = ac.message_block({"message_type": "action", "content": "x",
+                                 "turn_index": 0, "chat_turn": 2,
+                                 "evidence_ids": ["P-1"]})
+        self.assertNotIn("&middot;", html)
+        self.assertNotIn("&amp;middot;", html)
+        self.assertIn("·", html)
+
+    def test_policy_decision_pairs_without_shared_evidence_ids(self):
+        """The real log omits evidence ids on the policy entry.
+
+        Pairing must therefore follow transcript order; joining on the
+        id would leave every decision rendering as pending.
+        """
+        messages = [
+            {"message_type": "user", "content": "go"},
+            {"message_type": "action", "content": "a", "turn_index": 0,
+             "evidence_ids": ["P-x", "DX-x"],
+             "detail": {"capability": "network_service_discovery"}},
+            {"message_type": "policy", "content": "ALLOW", "turn_index": 0,
+             "evidence_ids": [], "detail": {"decision": "allow"}},
+        ]
+        rows = ac._chat_actions(messages)
+        self.assertEqual(rows[0]["decision"], "allow")
+        self.assertEqual(rows[0]["evidence_ids"], ["P-x", "DX-x"])
+
+
+
 if __name__ == "__main__":
     unittest.main()
