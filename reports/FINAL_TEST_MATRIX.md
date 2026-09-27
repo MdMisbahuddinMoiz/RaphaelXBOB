@@ -2,8 +2,7 @@
 
 **Repository**: `/home/moiz/raphael-2.0-rbsv2r`
 **Branch**: `hackathon/bob-assisted-raphael`
-**HEAD**: `0ebb9f389` — *feat: admit local-deterministic as an explicit offline demo provider*
-**Runner**: `python3 -m pytest -q` (pytest 9.1.1, CPython 3.14.4)
+**HEAD**: `beef7ef37` — *fix: seal all governed run paths*
 **Date of measurement**: 2026-09-27
 
 ---
@@ -11,12 +10,12 @@
 ## FULL SUITE — CURRENT
 
 ```
-2156 passed, 1 skipped, 4 xfailed, 27 warnings, 297 subtests passed in 199.15s
+2160 passed, 1 skipped, 4 xfailed, 27 warnings, 297 subtests passed in 192.73s
 ```
 
 | Metric | Value |
 |--------|-------|
-| passed | **2156** |
+| passed | **2160** |
 | failed | **0** |
 | skipped | 1 |
 | xfailed | 4 |
@@ -37,11 +36,13 @@ The 4 xfails are the documented D17 `AutonomousLoop` reducer binding gap
 | `8df8b6f39` (chat console) — after `_latest_discovery` fix | 2150 | 4 | 1 | 4 | 295 |
 | `3150a3060` (test portability) | 2154 | 0 | 1 | 4 | 295 |
 | `6009afbc6` / `0ebb9f389` (id durability + provider admission) | **2156** | **0** | 1 | 4 | **297** |
+| `beef7ef37` (run-path sealing) — **latest verified checkpoint** | **2160** | **0** | 1 | 4 | **297** |
 
 - **6 → 0 failures.** The 2 chat failures were a `NameError` on an unwritten helper
   (`_latest_discovery`) plus a missing `config` parameter; the 4 remaining were
   environment-specific absolute paths in test code.
-- **+2 tests, +2 subtests** from the transcript-id durability regression tests.
+- **+2 tests, +2 subtests** from the transcript-id durability regression tests, then
+  **+4 tests** from the run-path sealing tests (`beef7ef37`).
 - **Zero regressions introduced** at any step.
 
 ---
@@ -89,6 +90,7 @@ matrix is not read as "tests only".
 | Transcript id durability across restart | server process restarted; next turn continued at `C-USER-000011` with no collision | **PROVEN** |
 | Real hosted-model (MiMo) mission | `a7d4d1357` vertical slice — governed discovery → SSH → evidence-driven replanning → user-to-root | **PROVEN at `a7d4d1357`; not re-run in this environment** |
 | Kioptrix Level 1 autonomous compromise | — | **NOT DEMONSTRATED** — next demonstration target |
+| Run-path chain-level sealing | all four governed run paths seal; delete/reorder of evidence invalidates; missing seal stays `missing-seal`; reproduced 4/4 failing before `beef7ef37` | **PROVEN** |
 
 ---
 

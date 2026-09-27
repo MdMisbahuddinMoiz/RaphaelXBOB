@@ -2,8 +2,8 @@
 
 **Repository**: `/home/moiz/raphael-2.0-rbsv2r`
 **Branch**: `hackathon/bob-assisted-raphael`
-**Current HEAD**: `0ebb9f389` — *feat: admit local-deterministic as an explicit offline demo provider*
-**Current measured state**: **2156 passed · 1 skipped · 4 xfailed · 0 failed · 297 subtests** (199.15s)
+**Current HEAD**: `beef7ef37` — *fix: seal all governed run paths*
+**Current measured state**: **2160 passed · 1 skipped · 4 xfailed · 0 failed · 297 subtests** (192.73s)
 **Prior audit**: 2026-09-26, at `0cbcd263f` — *1941 passed, 4 failed, 1 skipped, 4 xfailed, 236 subtests*
 
 > Measurements labelled **[2026-09-26]** are historical and describe the repository at
@@ -156,6 +156,30 @@ intact.
   Confirmed across real processes: after restarting the server, the next turn continued at
   `C-USER-000011` with no collision.
 
+### 6.4 Missing chain-level seals on two run paths
+- **Status**: RESOLVED — `beef7ef37`
+- **Cause**: `harness/run.py::start_run` and `harness/telnet_run.py::run_telnet_mission`
+  closed their ledgers without writing `seal.json`, on both the normal and the exception
+  exit. `network_run` and `model_run` already sealed, so only these two paths produced run
+  dirs that verified as `(False, "missing-seal")` and lacked chain-level delete/reorder
+  detection. Per-record digests still failed closed; the gap was at the chain level.
+- **Resolution**: each module gained the same `_try_write_seal(run_dir)` helper the network
+  and model paths already use — never raises, logs at WARNING, and is called immediately
+  after `ledger.close()` on both exits, so the seal is written after the run's final
+  evidence is persisted and never before. No third sealing implementation; the seal format
+  and `verify_seal` semantics are unchanged.
+- **Verification**: `tests/test_run_path_sealing.py` proves three states on each path —
+  intact run verifies `(True, "seal-ok")`; deleting an evidence record invalidates it;
+  reordering evidence records invalidates it; and a missing `seal.json` remains
+  `(False, "missing-seal")`, never an implicit pass. **Reproduced before the fix: 4/4 of
+  these tests failed** ("run … was not sealed"); after the fix, 4/4 passed. 51 focused
+  seal/API tests pass, and the full suite is 2160 passed / 0 failed with
+  `arena/results/raw` clean.
+- **Note**: `tests/test_m15_1_http_api.py::RunInspection::test_L_seal` previously asserted
+  that a fresh run has *no* seal — it had pinned the defect in place. It was inverted, not
+  removed: it now asserts a sealed run verifies, and that deleting the sidecar degrades
+  honestly to `missing-seal`.
+
 ---
 
 ## 7. PRE-EXISTING FAILURES — **[2026-09-26] HISTORICAL, NOW RESOLVED**
@@ -187,9 +211,10 @@ reports **0 failed**.
 | Arena artifact destruction | **RESOLVED** — `9bb6d095c` |
 | Chat transcript id collision | **RESOLVED** — `6009afbc6` |
 | Acceptance suite | **HONEST** — asserts real returned state, no mocks, no skips/xfails, no tautologies |
-| Full suite | **2156 passed · 0 failed** |
+| Full suite | **2160 passed · 0 failed** |
+| Run-path sealing | **RESOLVED** — `beef7ef37` |
 
-**VERDICT**: the test suite is honest and currently green. Three integrity defects and one
+**VERDICT**: the test suite is honest and currently green. Four integrity defects and one
 portability defect were found and resolved during this audit; each is recorded above with
 its cause, its resolving commit, and how it was verified. None was hidden, skipped, xfailed
 or reclassified.

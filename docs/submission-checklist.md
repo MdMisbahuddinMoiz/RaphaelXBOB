@@ -1,6 +1,6 @@
 # RAPHAEL — SUBMISSION CHECKLIST
 
-**HEAD**: `0ebb9f389` · **Branch**: `hackathon/bob-assisted-raphael` · **Python**: 3.14.4
+**HEAD**: `beef7ef37` · **Branch**: `hackathon/bob-assisted-raphael` · **Python**: 3.14.4
 **Product**: `raphael_ibm_bob/` — stdlib-only, no third-party runtime dependencies.
 
 Status vocabulary: **VERIFIED** (physically executed on the current tree) ·
@@ -39,12 +39,12 @@ Status vocabulary: **VERIFIED** (physically executed on the current tree) ·
 
 ## 2. Test state
 
-- [x] **VERIFIED [2026-09-27]** — full suite: **2156 passed · 0 failed · 1 skipped ·
-      4 xfailed · 297 subtests** in 199.15s, exit 0.
+- [x] **VERIFIED [2026-09-27]** — full suite: **2160 passed · 0 failed · 1 skipped ·
+      4 xfailed · 297 subtests** in 192.73s, exit 0. This is the latest verified checkpoint.
 - [x] **VERIFIED [2026-09-27]** — the 6 failures present at the start of this pass are
       **fixed, not reclassified**: 2 in the chat console (a `NameError` on an unwritten
       helper plus a missing parameter) and 4 environment-specific test-path failures.
-      Journey: **6 failed / 2148 passed → 0 failed / 2156 passed**.
+      Journey: **6 failed / 2148 passed → 0 failed / 2160 passed**.
 - [x] **VERIFIED [2026-09-27]** — the 4 `xfail`s are the documented D17 `AutonomousLoop`
       reducer gap, individually justifiable. The 1 skip is environment-dependent.
 - [x] **VERIFIED [2026-09-27]** — the suite leaves committed evidence intact:
@@ -56,7 +56,7 @@ Earlier revisions of this checklist and of the README carried competing test cou
 ("209 tests, 0 failures", "1165 tests, 0 failures", "1183 entries") that did not match
 what the suite actually reported. That **test-count discrepancy** is recorded here rather
 than quietly overwritten: `README.md` now withdraws the older figures explicitly, and the
-authoritative number is the one measured at this HEAD — **2156 passed, 0 failed**. Any
+authoritative number is the one measured at this HEAD — **2160 passed, 0 failed**. Any
 figure in prose that disagrees with a measured run is to be corrected, not averaged.
 
 Per-layer counts: `reports/FINAL_TEST_MATRIX.md`.
@@ -128,20 +128,25 @@ Per-layer counts: `reports/FINAL_TEST_MATRIX.md`.
       unique per execution.
 - [x] **VERIFIED [2026-09]** — evidence is reconstructable from disk without console
       narration.
-- [x] **VERIFIED [2026-09]** — seal verification detects tampering and deletion
-      (head-mismatch / record-count-mismatch). **The seal is unkeyed** — it proves integrity
-      against accidents and edits, not against an attacker with write access to `runs/`.
+- [x] **VERIFIED [2026-09-27]** — seal verification detects tampering and deletion
+      (head-mismatch / record-count-mismatch) on **every** governed run path.
+      **The seal is unkeyed** — it proves integrity against accidents and edits, not
+      against an attacker with write access to `runs/`.
 - [x] **VERIFIED [2026-09]** — artifacts resolve; no missing/malformed evidence.
-- [ ] **NOT VERIFIED** — tamper-evidence on every run path. `harness/run.py::start_run`
-      and `harness/telnet_run.py` do not write a seal, so unsealed runs lack chain-level
-      delete/reorder detection. Per-record digests still fail closed. *(Carried from
-      `AUDIT_AGENT_6_TESTS.md` finding F-2; not re-verified this pass.)*
+- [x] **VERIFIED / CLOSED [2026-09-27]** — tamper-evidence on every run path. Previously
+      NOT VERIFIED: `harness/run.py::start_run` and `harness/telnet_run.py` closed their
+      ledgers without writing a seal, so those two paths lacked chain-level
+      delete/reorder detection. **Resolved in `beef7ef37`.** Proven by
+      `tests/test_run_path_sealing.py`: intact run verifies, deleting a record invalidates,
+      reordering records invalidates, and a missing seal stays `missing-seal`. The tests
+      were reproduced failing 4/4 before the fix. *(Carried from `AUDIT_AGENT_6_TESTS.md`
+      finding F-2; closed this pass.)*
 
 ---
 
 ## 7. Test integrity — resolved defects
 
-All three were found by executing the system, and all are fixed. None was hidden, skipped,
+All four were found by executing the system, and all are fixed. None was hidden, skipped,
 xfailed, or reclassified. Detail in `reports/TEST_INTEGRITY_AUDIT.md` §6.
 
 - [x] **RESOLVED `3150a3060`** — test code embedded an absolute repository path from
@@ -153,6 +158,10 @@ xfailed, or reclassified. Detail in `reports/TEST_INTEGRITY_AUDIT.md` §6.
       reset on restart, reissuing ids the durable transcript already held.
 - [x] **RESOLVED `0cbcd263f`** *(historical)* — `demos/c1a_live_hero.py` no longer claims a
       behaviour probe it does not run.
+- [x] **RESOLVED `beef7ef37`** — `start_run` and `run_telnet_mission` closed their ledgers
+      without writing `seal.json`, leaving those two paths without chain-level
+      delete/reorder detection. Both now seal after final evidence persistence on both
+      exits, mirroring the network and model paths.
 
 ---
 
@@ -185,9 +194,9 @@ outstanding items are:
 
 1. **Real hosted-model demonstration** — BLOCKED on a credential in this environment.
 2. **Kioptrix Level 1 demonstration** — NOT VERIFIED; next demonstration target.
-3. **Tamper-evidence on all run paths** — NOT VERIFIED; unsealed runs lack chain-level
-   detection.
-4. **Judge-portal archive** — not produced.
+3. **Judge-portal archive** — not produced.
+
+Closed this pass: **tamper-evidence on all run paths** — VERIFIED as of `beef7ef37`.
 
 None of these is claimed as done. Each is stated here so the boundary of the submission is
 explicit rather than implied.

@@ -1,6 +1,6 @@
 # Raphael — AI-Assisted Governed Security Assessment
 
-Project: Raphael / `raphael-ibm-bob` 2.0.0. Commit `0ebb9f389`, branch
+Project: Raphael / `raphael-ibm-bob` 2.0.0. Commit `beef7ef37`, branch
 `hackathon/bob-assisted-raphael`. Python 3.14.4. The shipped product
 `raphael_ibm_bob/` is stdlib-only (no third-party runtime dependencies).
 
@@ -229,8 +229,8 @@ and none is made here.
 
 ## 9. Measured evidence
 
-**Current measured test state at `0ebb9f389`: 2156 passed, 0 failed, 1 skipped,
-4 xfailed, 297 subtests in 199.15s.**
+**Current measured test state at `beef7ef37`: 2160 passed, 0 failed, 1 skipped,
+4 xfailed, 297 subtests in 192.73s.**
 
 Session trajectory:
 
@@ -240,6 +240,7 @@ Session trajectory:
 | `8df8b6f39` after the chat-path fix | 2150 | 4 |
 | `3150a3060` after test portability | 2154 | 0 |
 | `6009afbc6` / `0ebb9f389` | **2156** | **0** |
+| `beef7ef37` after run-path sealing — **latest verified checkpoint** | **2160** | **0** |
 
 The 6 starting failures were: 2 in the chat console (a `NameError` on an
 unwritten helper, `_latest_discovery`, plus a missing `config` parameter) and 4
@@ -257,6 +258,12 @@ Two further defects were found by executing the system rather than by reading it
 - **Chat transcript id collision.** Message ids came from a process-local
   counter that reset on restart, reissuing ids the durable transcript already
   held. Resolved in `6009afbc6` by seeding the counter from the persisted log.
+
+- **Missing chain-level seals.** `start_run` and `run_telnet_mission` closed
+  their ledgers without writing `seal.json`, so those two paths lacked
+  chain-level delete/reorder detection. Resolved in `beef7ef37` by sealing
+  after final evidence persistence on both exits, mirroring the network and
+  model paths. The tamper tests were reproduced failing 4/4 before the fix.
 
 Full detail: `reports/TEST_INTEGRITY_AUDIT.md` and `reports/FINAL_TEST_MATRIX.md`.
 
@@ -297,9 +304,12 @@ the generic profile path and no per-target logic.
 
 Stated explicitly, without qualification:
 
-1. **Unkeyed seal.** The evidence seal detects tampering (count mismatch,
-   reordering, deletion) but does not authenticate the writer. Authenticity
-   would require a keyed mechanism, which is not implemented.
+1. **Unkeyed seal.** Every governed run path now writes `seal.json` after its
+   final evidence is persisted, and the seal detects tampering (count mismatch,
+   reordering, deletion) — but it does **not** authenticate the writer.
+   Authenticity would require a keyed mechanism, which is not implemented.
+   Protecting `runs/` and `sessions/` with filesystem permissions and backups
+   remains the operator's responsibility.
 2. **`_execution_context` never cleared.** The in-process execution context is
    not cleared between operations. This is in-process bookkeeping only and is
    outside the LLM threat model (the model has no access to it), but it is an

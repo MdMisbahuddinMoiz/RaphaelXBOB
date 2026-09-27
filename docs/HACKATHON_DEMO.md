@@ -1,6 +1,6 @@
 # RAPHAEL — 3-MINUTE HACKATHON DEMO RUNBOOK
 
-**HEAD**: `0ebb9f389` · **Branch**: `hackathon/bob-assisted-raphael` · **Python**: 3.14.4
+**HEAD**: `beef7ef37` · **Branch**: `hackathon/bob-assisted-raphael` · **Python**: 3.14.4
 
 This is the runbook for the live browser demonstration. Every command below was executed
 and its output recorded; the transcript in §5 is verbatim, not illustrative.
@@ -267,7 +267,7 @@ That distinction is preserved here deliberately.
 2. Start the target (§1) and verify 14/14 before demoing.
 3. Start a provider (§2) and the server (§3).
 4. Run the browser sequence (§4).
-5. Full suite: `python3 -m pytest -q` → **2156 passed, 0 failed, 1 skipped, 4 xfailed,
-   297 subtests** at `0ebb9f389`.
+5. Full suite: `python3 -m pytest -q` → **2160 passed, 0 failed, 1 skipped, 4 xfailed,
+   297 subtests** at `beef7ef37`.
 6. After any test run, `git diff --stat -- arena/results/raw` must be empty — the suite is
    isolated from committed evidence (resolved in `9bb6d095c`).
